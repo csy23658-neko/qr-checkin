@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#3860B2">
+  <title>QR 報到系統</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ── Loading Overlay ─────────────────────────────────────────────────── -->
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+  </div>
+
+  <!-- ── Screen: Login ───────────────────────────────────────────────────── -->
+  <div id="screen-login" class="screen active">
+    <div class="login-box">
+      <div class="login-icon">📋</div>
+      <h1>QR 報到系統</h1>
+      <p class="login-sub">請使用 Google 帳號登入</p>
+      <button class="btn btn-google" onclick="signIn()">
+        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+          <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+          <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z" fill="#34A853"/>
+          <path d="M3.964 10.707A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332z" fill="#FBBC05"/>
+          <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.961L3.964 7.293C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
+        </svg>
+        使用 Google 登入
+      </button>
+      <p id="login-error" class="msg-error" style="display:none"></p>
+    </div>
+  </div>
+
+  <!-- ── Screen: Event Setup (admin only) ────────────────────────────────── -->
+  <div id="screen-setup" class="screen">
+    <div class="header">
+      <span class="header-title">設定活動</span>
+    </div>
+    <div class="scroll-content">
+      <div class="card">
+        <p class="label">貼上 Google 試算表網址：</p>
+        <input id="input-sheet-url" type="url"
+          placeholder="https://docs.google.com/spreadsheets/d/…"
+          class="text-input">
+        <p id="setup-error" class="msg-error" style="display:none"></p>
+        <button class="btn btn-primary" onclick="confirmSetup()">確認並載入</button>
+      </div>
+
+      <div id="share-box" class="card" style="display:none">
+        <p class="label">將以下網址分享給志工：</p>
+        <div class="share-url-row">
+          <code id="share-url" class="share-url"></code>
+        </div>
+        <button id="btn-copy" class="btn btn-secondary" onclick="copyUrl()">複製網址</button>
+      </div>
+
+      <div class="card hint-card">
+        <p class="hint-title">試算表欄位順序（A 到 F）：</p>
+        <table class="hint-table">
+          <tr><th>欄</th><th>名稱</th><th>說明</th></tr>
+          <tr><td>A</td><td>標題</td><td>QR 碼值（必填）</td></tr>
+          <tr><td>B</td><td>姓名</td><td></td></tr>
+          <tr><td>C</td><td>通訊地址</td><td></td></tr>
+          <tr><td>D</td><td>備註</td><td>紅字顯示</td></tr>
+          <tr><td>E</td><td>Checkin_Stamp</td><td>系統填入</td></tr>
+          <tr><td>F</td><td>Checkin_By</td><td>系統填入</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Screen: Scan ─────────────────────────────────────────────────────── -->
+  <div id="screen-scan" class="screen">
+    <div class="header">
+      <span class="header-title">QR 報到</span>
+      <span id="scan-clock" class="header-clock"></span>
+    </div>
+    <div class="scan-content">
+      <!-- Result banner -->
+      <div id="result-banner" class="result-banner result-idle">
+        <div id="result-main" class="result-main">準備掃描</div>
+        <div id="result-detail" class="result-detail"></div>
+      </div>
+
+      <!-- Person info (appears after scan) -->
+      <div id="scan-info" class="scan-info" style="display:none">
+        <div id="scan-info-id" class="info-id"></div>
+        <div id="scan-info-name" class="info-name"></div>
+        <div id="scan-info-address" class="info-address"></div>
+        <div id="scan-info-notes" class="info-notes" style="display:none"></div>
+        <div id="scan-info-stamp" class="info-stamp" style="display:none"></div>
+      </div>
+
+      <!-- QR reader -->
+      <div id="qr-reader" class="qr-reader"></div>
+    </div>
+  </div>
+
+  <!-- ── Screen: List ─────────────────────────────────────────────────────── -->
+  <div id="screen-list" class="screen">
+    <div class="header">
+      <span class="header-title">總表</span>
+      <button class="header-btn" onclick="refreshData()" title="重新整理">↻</button>
+    </div>
+    <div class="search-bar">
+      <span class="search-icon">🔍</span>
+      <input id="search-input" type="search"
+        placeholder="姓名 / 編號末3碼 / 地址任意字"
+        oninput="renderList()">
+    </div>
+    <div id="list-stats" class="list-stats"></div>
+    <div id="list-container" class="list-container"></div>
+  </div>
+
+  <!-- ── Screen: Manual Check-in ─────────────────────────────────────────── -->
+  <div id="screen-manual" class="screen">
+    <div class="header">
+      <button class="header-btn" onclick="goBack()">←</button>
+      <span class="header-title">手動報到</span>
+    </div>
+    <div class="scroll-content">
+      <div class="card person-card">
+        <div id="manual-id"      class="person-id"></div>
+        <div id="manual-name"    class="person-name"></div>
+        <div id="manual-address" class="person-address"></div>
+        <div id="manual-notes"   class="person-notes"  style="display:none"></div>
+        <div id="manual-stamp"   class="person-stamp"></div>
+      </div>
+      <button id="btn-manual-in"   class="btn btn-success" onclick="manualCheckin()">手動報到</button>
+      <button id="btn-manual-undo" class="btn btn-danger"  onclick="manualUndo()">取消報到</button>
+    </div>
+  </div>
+
+  <!-- ── Screen: Report (admin only) ─────────────────────────────────────── -->
+  <div id="screen-report" class="screen">
+    <div class="header">
+      <span class="header-title">報告</span>
+      <button class="header-btn" onclick="refreshData()" title="重新整理">↻</button>
+    </div>
+    <div class="scroll-content">
+      <div id="report-stats" class="report-stats"></div>
+      <button class="btn btn-primary" onclick="downloadReport()">⬇ 下載出席報告 (CSV)</button>
+      <button class="btn btn-secondary" onclick="goToSetup()" style="margin-top:12px">更換活動</button>
+    </div>
+  </div>
+
+  <!-- ── Bottom Navigation ────────────────────────────────────────────────── -->
+  <nav id="app-nav" style="display:none">
+    <button class="nav-btn" data-screen="screen-scan" onclick="goTo('screen-scan')">
+      <span class="nav-icon">📷</span><span>掃描</span>
+    </button>
+    <button class="nav-btn" data-screen="screen-list" onclick="goTo('screen-list')">
+      <span class="nav-icon">📋</span><span>總表</span>
+    </button>
+    <button class="nav-btn" id="nav-report" data-screen="screen-report"
+      onclick="goTo('screen-report')" style="display:none">
+      <span class="nav-icon">📊</span><span>報告</span>
+    </button>
+  </nav>
+
+  <script src="config.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
