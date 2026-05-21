@@ -134,8 +134,7 @@ html, body { height: 100%; overflow: hidden; font-family: 'Segoe UI', 'PingFang 
 .login-sub { font-size: 14px; color: var(--text-muted); }
 .login-box .btn-google { width: 100%; }
 
-/* ── Event Setup screen ────────────────────────────────────────────────────── */
-#screen-setup .scroll-content { padding-top: 16px; }
+/* ── Form labels ───────────────────────────────────────────────────────────── */
 .label { font-size: 14px; color: var(--text-muted); font-weight: 500; }
 .text-input {
   width: 100%; padding: 12px; border: 1.5px solid var(--border);
@@ -287,4 +286,60 @@ html, body { height: 100%; overflow: hidden; font-family: 'Segoe UI', 'PingFang 
   color: var(--danger); font-size: 14px;
   background: var(--danger-light); border-radius: 8px;
   padding: 10px 14px; margin-top: 4px;
+}
+.msg-success {
+  color: #2e7d32; font-size: 14px;
+  background: var(--success-light); border-radius: 8px;
+  padding: 10px 14px; margin-top: 4px;
+}
+
+/* ── Admin screen ──────────────────────────────────────────────────────────── */
+.admin-section-title {
+  font-size: 12px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 4px 2px 0;
+}
+
+.required { color: var(--danger); }
+
+.report-event-title {
+  font-size: 18px; font-weight: 700; color: var(--text);
+}
+.report-summary {
+  font-size: 14px; color: var(--text-muted); margin-top: -2px;
+}
+
+/* Allow list */
+.allowlist-loading {
+  font-size: 14px; color: var(--text-muted);
+  text-align: center; padding: 8px 0;
+}
+.allowlist-list {
+  border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden;
+}
+.allowlist-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+.allowlist-row:last-child { border-bottom: none; }
+.allowlist-email {
+  font-size: 14px; color: var(--text);
+  word-break: break-all; flex: 1; margin-right: 8px;
+}
+.btn-icon-danger {
+  background: var(--danger-light); border: none;
+  color: var(--danger); border-radius: 6px;
+  padding: 4px 10px; font-size: 13px; font-weight: 600;
+  cursor: pointer; flex-shrink: 0; line-height: 1.5;
+}
+.btn-icon-danger:active { opacity: .7; }
+
+/* Coming-soon placeholder */
+.admin-coming-soon {
+  font-size: 14px; color: var(--text-muted);
+  text-align: center; padding: 8px 0;
 }

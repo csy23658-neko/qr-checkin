@@ -3,21 +3,33 @@
 // ── State ─────────────────────────────────────────────────────────────────────
 
 const state = {
-  accessToken:  null,
-  user:         null,   // { email, name }
-  role:         null,   // 'admin' | 'volunteer'
-  sheetId:      null,
-  rows:         [],     // [{ rowIndex, id, name, address, notes, checkinStamp, checkinBy }]
-  selectedRow:  null,
-  scanner:      null,
-  scanCooldown: false,
-  clockTimer:   null,
-  currentScreen: 'screen-login',
+  accessToken:      null,
+  user:             null,   // { email, name }
+  role:             null,   // 'admin' | 'volunteer'
+  sheetId:          null,
+  spreadsheetTitle: null,
+  allowListSheetId: localStorage.getItem('allowListSheetId') || null,
+  rows:             [],     // [{ rowIndex, id, name, address, notes, checkinStamp, checkinBy }]
+  selectedRow:      null,
+  scanner:          null,
+  scanCooldown:     false,
+  clockTimer:       null,
+  currentScreen:    'screen-login',
 };
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 window.addEventListener('load', () => {
+  // Set default walk-in notes
+  const notesEl = document.getElementById('walkin-notes');
+  if (notesEl) notesEl.value = '現場報到，已核實身分';
+
+  // If allow list is already configured, update placeholder
+  if (state.allowListSheetId) {
+    const urlInput = document.getElementById('input-allowlist-url');
+    if (urlInput) urlInput.placeholder = '已設定（貼上新網址以更換）';
+  }
+
   const poll = setInterval(() => {
     if (typeof google !== 'undefined' && google.accounts) {
       clearInterval(poll);
@@ -52,7 +64,7 @@ async function onTokenReceived(resp) {
   setTimeout(() => tokenClient.requestAccessToken({ prompt: '' }),
     (resp.expires_in - 120) * 1000);
 
-  // Get user info from Google
+  // Get user info
   let info;
   try {
     const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo',
@@ -60,36 +72,56 @@ async function onTokenReceived(resp) {
     info = await r.json();
   } catch { showLoginError('無法取得使用者資訊，請重試。'); return; }
 
-  const email = (info.email || '').toLowerCase();
-  const admins     = CONFIG.ADMINS.map(e => e.toLowerCase());
-  const volunteers = CONFIG.VOLUNTEERS.map(e => e.toLowerCase());
+  const email  = (info.email || '').toLowerCase();
+  const admins = CONFIG.ADMINS.map(e => e.toLowerCase());
 
   if (admins.includes(email)) {
     state.role = 'admin';
-  } else if (volunteers.length === 0 || volunteers.includes(email)) {
-    state.role = 'volunteer';
   } else {
-    showLoginError('您的帳號（' + email + '）沒有使用此系統的權限。');
-    return;
+    // Check allow list
+    setLoading(true);
+    let permitted = false;
+    try {
+      permitted = await checkAllowList(email);
+    } catch {
+      setLoading(false);
+      showLoginError('無法驗證使用者權限，請稍後再試。');
+      return;
+    }
+    setLoading(false);
+    if (!permitted) {
+      showLoginError(`您的帳號（${email}）沒有使用此系統的權限。`);
+      return;
+    }
+    state.role = 'volunteer';
   }
 
   state.user = { email, name: info.name || email };
 
-  // Show report nav tab for admins
+  // Show admin nav tab for admins
   if (state.role === 'admin') {
-    document.getElementById('nav-report').style.display = '';
+    document.getElementById('nav-admin').style.display = '';
   }
+  document.getElementById('app-nav').style.display = 'flex';
 
-  // Determine starting screen
+  // Navigate to first screen
   const sid = new URLSearchParams(location.search).get('sheet');
   if (sid) {
     state.sheetId = sid;
-    enterApp();
+    await enterApp();
   } else if (state.role === 'admin') {
-    showScreen('screen-setup');
+    goTo('screen-admin');
   } else {
+    // Volunteer without a sheet URL
+    document.getElementById('app-nav').style.display = 'none';
     showLoginError('請向管理員索取活動連結。');
   }
+}
+
+async function checkAllowList(email) {
+  if (!state.allowListSheetId) return false;
+  const emails = await loadAllowListEmails();
+  return emails.some(e => e.email === email);
 }
 
 // ── Event Setup ───────────────────────────────────────────────────────────────
@@ -101,13 +133,27 @@ async function confirmSetup() {
   if (!m) { showError('setup-error', '網址格式不正確，請重新貼上 Google 試算表網址。'); return; }
 
   state.sheetId = m[1];
-  history.replaceState(null, '', '?sheet=' + state.sheetId);
 
-  const shareUrl = location.href;
-  document.getElementById('share-url').textContent = shareUrl;
-  document.getElementById('share-box').style.display = '';
+  setLoading(true);
+  try {
+    await loadRows();
+    state.spreadsheetTitle = await fetchSpreadsheetTitle(state.sheetId);
 
-  await enterApp();
+    history.replaceState(null, '', '?sheet=' + state.sheetId);
+    document.getElementById('share-url').textContent    = location.href;
+    document.getElementById('share-box').style.display  = '';
+
+    renderAdminReport();
+  } catch (e) {
+    state.sheetId          = null;
+    state.spreadsheetTitle = null;
+    const msg = (e.status === 403 || e.status === 404)
+      ? '無法存取試算表，請確認共用設定。'
+      : '載入失敗：' + (e.message || e);
+    showError('setup-error', msg);
+  } finally {
+    setLoading(false);
+  }
 }
 
 function copyUrl() {
@@ -118,21 +164,16 @@ function copyUrl() {
   });
 }
 
-function goToSetup() {
-  // Stop scanner if needed
-  if (state.currentScreen === 'screen-scan') stopScanner();
-  showScreen('screen-setup');
-}
-
-// ── Enter App ─────────────────────────────────────────────────────────────────
+// ── Enter App (sheet URL pre-set via URL param) ───────────────────────────────
 
 async function enterApp() {
   setLoading(true);
   try {
     await loadRows();
-    document.getElementById('app-nav').style.display = 'flex';
+    state.spreadsheetTitle = await fetchSpreadsheetTitle(state.sheetId);
     goTo('screen-scan');
   } catch (e) {
+    document.getElementById('app-nav').style.display = 'none';
     if (e.status === 403 || e.status === 404) {
       showLoginError('無法存取試算表。\n請確認您已將試算表共用給您的 Google 帳號，且擁有編輯權限。');
     } else {
@@ -145,11 +186,16 @@ async function enterApp() {
 
 // ── Sheets API ────────────────────────────────────────────────────────────────
 
-async function apiGet(range) {
-  const r = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${state.sheetId}/values/${encodeURIComponent(range)}`,
-    { headers: { Authorization: `Bearer ${state.accessToken}` } }
-  );
+async function sheetsRequest(method, path, body) {
+  const opts = {
+    method,
+    headers: { Authorization: `Bearer ${state.accessToken}` },
+  };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const r = await fetch('https://sheets.googleapis.com/v4/spreadsheets' + path, opts);
   if (!r.ok) {
     const j  = await r.json().catch(() => ({}));
     const e  = new Error(j.error?.message || `HTTP ${r.status}`);
@@ -159,22 +205,48 @@ async function apiGet(range) {
   return r.json();
 }
 
-async function apiPut(range, values) {
-  const r = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${state.sheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
-    {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${state.accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ range, majorDimension: 'ROWS', values }),
-    }
-  );
-  if (!r.ok) {
-    const j  = await r.json().catch(() => ({}));
-    throw new Error(j.error?.message || `HTTP ${r.status}`);
-  }
+// Event sheet helpers (use state.sheetId)
+function apiGet(range) {
+  return sheetsRequest('GET',
+    `/${state.sheetId}/values/${encodeURIComponent(range)}`);
+}
+function apiPut(range, values) {
+  return sheetsRequest('PUT',
+    `/${state.sheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
+    { range, majorDimension: 'ROWS', values });
+}
+function apiAppend(range, values) {
+  return sheetsRequest('POST',
+    `/${state.sheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+    { majorDimension: 'ROWS', values });
+}
+
+// Generic sheet helpers (any sheetId)
+function sheetsGet(sheetId, range) {
+  return sheetsRequest('GET',
+    `/${sheetId}/values/${encodeURIComponent(range)}`);
+}
+function sheetsPut(sheetId, range, values) {
+  return sheetsRequest('PUT',
+    `/${sheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
+    { range, majorDimension: 'ROWS', values });
+}
+function sheetsAppend(sheetId, range, values) {
+  return sheetsRequest('POST',
+    `/${sheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+    { majorDimension: 'ROWS', values });
+}
+
+async function fetchSpreadsheetTitle(sheetId) {
+  try {
+    const r = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=properties.title`,
+      { headers: { Authorization: `Bearer ${state.accessToken}` } }
+    );
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j.properties?.title || null;
+  } catch { return null; }
 }
 
 // ── Data ──────────────────────────────────────────────────────────────────────
@@ -182,16 +254,15 @@ async function apiPut(range, values) {
 async function loadRows() {
   const result = await apiGet('A:F');
   const all    = result.values || [];
-  // Row 1 is headers; data starts at row 2
   state.rows = all.slice(1)
     .map((r, i) => ({
-      rowIndex:     i + 2,
-      id:           (r[0] || '').trim(),
-      name:          r[1] || '',
-      address:       r[2] || '',
-      notes:         r[3] || '',
-      checkinStamp:  r[4] || '',
-      checkinBy:     r[5] || '',
+      rowIndex:    i + 2,
+      id:          (r[0] || '').trim(),
+      name:         r[1] || '',
+      address:      r[2] || '',
+      notes:        r[3] || '',
+      checkinStamp: r[4] || '',
+      checkinBy:    r[5] || '',
     }))
     .filter(r => r.id);
 }
@@ -200,8 +271,8 @@ async function refreshData() {
   setLoading(true);
   try {
     await loadRows();
-    if (state.currentScreen === 'screen-list')   renderList();
-    if (state.currentScreen === 'screen-report') renderReport();
+    if (state.currentScreen === 'screen-list')  renderList();
+    if (state.currentScreen === 'screen-admin') renderAdminReport();
   } catch { alert('重新整理失敗，請檢查網路。'); }
   finally  { setLoading(false); }
 }
@@ -237,7 +308,7 @@ async function startScanner() {
       { facingMode: 'environment' },
       { fps: 10, qrbox: { width: 230, height: 230 } },
       onScanSuccess,
-      () => {}  // per-frame decode errors are normal
+      () => {}
     );
   } catch (err) {
     container.innerHTML = `<p class="msg-error" style="padding:20px">相機啟動失敗：${esc(String(err))}<br><br>請確認已允許瀏覽器使用相機。</p>`;
@@ -293,8 +364,8 @@ function flashResult(type, text, code, row) {
     document.getElementById('scan-info-address').textContent = row.address;
 
     const notesEl = document.getElementById('scan-info-notes');
-    notesEl.textContent    = row.notes;
-    notesEl.style.display  = row.notes ? '' : 'none';
+    notesEl.textContent   = row.notes;
+    notesEl.style.display = row.notes ? '' : 'none';
 
     const stampEl = document.getElementById('scan-info-stamp');
     stampEl.textContent   = row.checkinStamp ? '報到時間：' + row.checkinStamp : '';
@@ -415,13 +486,35 @@ async function manualUndo() {
   finally  { setLoading(false); }
 }
 
-// ── Report Screen ─────────────────────────────────────────────────────────────
+// ── Admin Screen ──────────────────────────────────────────────────────────────
 
-function renderReport() {
+function renderAdmin() {
+  renderAdminReport();
+  renderAllowListSection(); // async, self-managing
+}
+
+// ── Report (within Admin) ─────────────────────────────────────────────────────
+
+function renderAdminReport() {
+  const titleEl = document.getElementById('report-event-title');
+  const summEl  = document.getElementById('report-summary');
+  const statsEl = document.getElementById('report-stats');
+
+  if (!state.sheetId) {
+    titleEl.textContent = '尚未設定活動試算表';
+    summEl.textContent  = '';
+    statsEl.innerHTML   = '';
+    return;
+  }
+
   const total   = state.rows.length;
   const checked = state.rows.filter(r => r.checkinStamp).length;
+  const title   = state.spreadsheetTitle || '';
 
-  document.getElementById('report-stats').innerHTML = `
+  titleEl.textContent = title ? `${title} 出席報告` : '出席報告';
+  summEl.textContent  = `總數 ${total}　已報到 ${checked}　未報到 ${total - checked}`;
+
+  statsEl.innerHTML = `
     <div class="stat-card blue">
       <div class="stat-num">${total}</div>
       <div class="stat-label">總人數</div>
@@ -438,7 +531,8 @@ function renderReport() {
 }
 
 function downloadReport() {
-  const header = ['標題', '姓名', '通訊地址', '備註', '報到時間', '報到人員'];
+  if (!state.sheetId) { alert('請先設定活動試算表。'); return; }
+  const header  = ['標題', '姓名', '通訊地址', '備註', '報到時間', '報到人員'];
   const csvRows = [
     header,
     ...state.rows.map(r => [r.id, r.name, r.address, r.notes, r.checkinStamp, r.checkinBy]),
@@ -447,22 +541,170 @@ function downloadReport() {
     row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')
   ).join('\r\n');
 
-  // BOM so Excel opens Chinese text correctly
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href     = url;
-  a.download = `出席報告_${dateString()}.csv`;
+  a.download = `${state.spreadsheetTitle || '出席報告'}_${dateString()}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
+// ── Walk-in ───────────────────────────────────────────────────────────────────
+
+function generateWalkInId() {
+  const d   = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `W-${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+async function addWalkIn() {
+  hideError('walkin-error');
+  document.getElementById('walkin-success').style.display = 'none';
+
+  const name    = document.getElementById('walkin-name').value.trim();
+  const address = document.getElementById('walkin-address').value.trim();
+  const notes   = document.getElementById('walkin-notes').value.trim() || '現場報到，已核實身分';
+
+  if (!name)          { showError('walkin-error', '請填寫姓名。'); return; }
+  if (!state.sheetId) { showError('walkin-error', '請先在「活動設定」中載入試算表。'); return; }
+
+  setLoading(true);
+  try {
+    const id     = generateWalkInId();
+    const stamp  = nowString();
+    const by     = state.user.name + ' 手動';
+
+    const result = await apiAppend('A:F', [[id, name, address, notes, stamp, by]]);
+
+    // Parse actual row index from the API response
+    const rangeMatch = (result.updates?.updatedRange || '').match(/!A(\d+)/);
+    const rowIndex   = rangeMatch ? parseInt(rangeMatch[1]) : (state.rows.length + 2);
+
+    state.rows.push({ rowIndex, id, name, address, notes, checkinStamp: stamp, checkinBy: by });
+
+    // Reset form (keep notes default)
+    document.getElementById('walkin-name').value    = '';
+    document.getElementById('walkin-address').value = '';
+    document.getElementById('walkin-notes').value   = '現場報到，已核實身分';
+
+    const successEl = document.getElementById('walkin-success');
+    successEl.textContent   = `✓ ${name} 已新增並報到`;
+    successEl.style.display = '';
+    setTimeout(() => { successEl.style.display = 'none'; }, 4000);
+
+    renderAdminReport();
+  } catch (err) {
+    showError('walkin-error', '新增失敗：' + err.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+// ── Allow List ────────────────────────────────────────────────────────────────
+
+async function loadAllowListEmails() {
+  const result = await sheetsGet(state.allowListSheetId, 'A:A');
+  const all    = result.values || [];
+  return all.slice(1)
+    .map((r, i) => ({ rowIndex: i + 2, email: (r[0] || '').trim().toLowerCase() }))
+    .filter(e => e.email);
+}
+
+function saveAllowListSheet() {
+  hideError('allowlist-setup-error');
+  const url = document.getElementById('input-allowlist-url').value.trim();
+  const m   = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (!m) { showError('allowlist-setup-error', '網址格式不正確，請重新貼上 Google 試算表網址。'); return; }
+
+  state.allowListSheetId = m[1];
+  localStorage.setItem('allowListSheetId', state.allowListSheetId);
+
+  const urlInput = document.getElementById('input-allowlist-url');
+  urlInput.value       = '';
+  urlInput.placeholder = '已設定（貼上新網址以更換）';
+
+  renderAllowListSection();
+}
+
+async function renderAllowListSection() {
+  const container = document.getElementById('allowlist-container');
+  const addBox    = document.getElementById('allowlist-add');
+  if (!container) return;
+
+  if (!state.allowListSheetId) {
+    container.innerHTML  = '';
+    addBox.style.display = 'none';
+    return;
+  }
+
+  container.innerHTML  = '<p class="allowlist-loading">載入中…</p>';
+  addBox.style.display = 'none';
+
+  try {
+    const emails = await loadAllowListEmails();
+    addBox.style.display = '';
+    hideError('allowlist-add-error');
+
+    if (emails.length === 0) {
+      container.innerHTML = '<p class="msg-empty" style="padding:12px 0">名單為空</p>';
+      return;
+    }
+
+    container.innerHTML = `
+      <div class="allowlist-list">
+        ${emails.map(e => `
+          <div class="allowlist-row">
+            <span class="allowlist-email">${esc(e.email)}</span>
+            <button class="btn-icon-danger" onclick="removeAllowListEmail(${e.rowIndex})">✕</button>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } catch (err) {
+    container.innerHTML = `<p class="msg-error">無法讀取名單：${esc(err.message)}</p>`;
+  }
+}
+
+async function addAllowListEmail() {
+  hideError('allowlist-add-error');
+  const input = document.getElementById('new-email');
+  const email = input.value.trim().toLowerCase();
+  if (!email || !email.includes('@')) {
+    showError('allowlist-add-error', '請輸入有效的電子郵件地址。');
+    return;
+  }
+
+  setLoading(true);
+  try {
+    await sheetsAppend(state.allowListSheetId, 'A:A', [[email]]);
+    input.value = '';
+    await renderAllowListSection();
+  } catch (err) {
+    showError('allowlist-add-error', '新增失敗：' + err.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function removeAllowListEmail(rowIndex) {
+  if (!confirm('確定要移除此帳號？')) return;
+  setLoading(true);
+  try {
+    await sheetsPut(state.allowListSheetId, `A${rowIndex}`, [['']]);
+    await renderAllowListSection();
+  } catch (err) {
+    alert('移除失敗：' + err.message);
+  } finally {
+    setLoading(false);
+  }
+}
+
 // ── Navigation ────────────────────────────────────────────────────────────────
 
 function goTo(screenId) {
-  // Tear down scan screen if we're leaving it
   if (state.currentScreen === 'screen-scan' && screenId !== 'screen-scan') {
     stopScanner();
   }
@@ -476,13 +718,12 @@ function goTo(screenId) {
 
   state.currentScreen = screenId;
 
-  if (screenId === 'screen-scan')   startScanner();
-  if (screenId === 'screen-list')   renderList();
-  if (screenId === 'screen-report') renderReport();
+  if (screenId === 'screen-scan')  startScanner();
+  if (screenId === 'screen-list')  renderList();
+  if (screenId === 'screen-admin') renderAdmin();
 }
 
 function showScreen(id) {
-  // Used before nav bar appears (login → setup → app)
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   state.currentScreen = id;

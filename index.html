@@ -36,44 +36,6 @@
     </div>
   </div>
 
-  <!-- ── Screen: Event Setup (admin only) ────────────────────────────────── -->
-  <div id="screen-setup" class="screen">
-    <div class="header">
-      <span class="header-title">設定活動</span>
-    </div>
-    <div class="scroll-content">
-      <div class="card">
-        <p class="label">貼上 Google 試算表網址：</p>
-        <input id="input-sheet-url" type="url"
-          placeholder="https://docs.google.com/spreadsheets/d/…"
-          class="text-input">
-        <p id="setup-error" class="msg-error" style="display:none"></p>
-        <button class="btn btn-primary" onclick="confirmSetup()">確認並載入</button>
-      </div>
-
-      <div id="share-box" class="card" style="display:none">
-        <p class="label">將以下網址分享給志工：</p>
-        <div class="share-url-row">
-          <code id="share-url" class="share-url"></code>
-        </div>
-        <button id="btn-copy" class="btn btn-secondary" onclick="copyUrl()">複製網址</button>
-      </div>
-
-      <div class="card hint-card">
-        <p class="hint-title">試算表欄位順序（A 到 F）：</p>
-        <table class="hint-table">
-          <tr><th>欄</th><th>名稱</th><th>說明</th></tr>
-          <tr><td>A</td><td>標題</td><td>QR 碼值（必填）</td></tr>
-          <tr><td>B</td><td>姓名</td><td></td></tr>
-          <tr><td>C</td><td>通訊地址</td><td></td></tr>
-          <tr><td>D</td><td>備註</td><td>紅字顯示</td></tr>
-          <tr><td>E</td><td>Checkin_Stamp</td><td>系統填入</td></tr>
-          <tr><td>F</td><td>Checkin_By</td><td>系統填入</td></tr>
-        </table>
-      </div>
-    </div>
-  </div>
-
   <!-- ── Screen: Scan ─────────────────────────────────────────────────────── -->
   <div id="screen-scan" class="screen">
     <div class="header">
@@ -81,22 +43,17 @@
       <span id="scan-clock" class="header-clock"></span>
     </div>
     <div class="scan-content">
-      <!-- Result banner -->
       <div id="result-banner" class="result-banner result-idle">
         <div id="result-main" class="result-main">準備掃描</div>
         <div id="result-detail" class="result-detail"></div>
       </div>
-
-      <!-- Person info (appears after scan) -->
       <div id="scan-info" class="scan-info" style="display:none">
-        <div id="scan-info-id" class="info-id"></div>
-        <div id="scan-info-name" class="info-name"></div>
+        <div id="scan-info-id"      class="info-id"></div>
+        <div id="scan-info-name"    class="info-name"></div>
         <div id="scan-info-address" class="info-address"></div>
-        <div id="scan-info-notes" class="info-notes" style="display:none"></div>
-        <div id="scan-info-stamp" class="info-stamp" style="display:none"></div>
+        <div id="scan-info-notes"   class="info-notes" style="display:none"></div>
+        <div id="scan-info-stamp"   class="info-stamp" style="display:none"></div>
       </div>
-
-      <!-- QR reader -->
       <div id="qr-reader" class="qr-reader"></div>
     </div>
   </div>
@@ -128,7 +85,7 @@
         <div id="manual-id"      class="person-id"></div>
         <div id="manual-name"    class="person-name"></div>
         <div id="manual-address" class="person-address"></div>
-        <div id="manual-notes"   class="person-notes"  style="display:none"></div>
+        <div id="manual-notes"   class="person-notes" style="display:none"></div>
         <div id="manual-stamp"   class="person-stamp"></div>
       </div>
       <button id="btn-manual-in"   class="btn btn-success" onclick="manualCheckin()">手動報到</button>
@@ -136,16 +93,91 @@
     </div>
   </div>
 
-  <!-- ── Screen: Report (admin only) ─────────────────────────────────────── -->
-  <div id="screen-report" class="screen">
+  <!-- ── Screen: Admin 行政 ───────────────────────────────────────────────── -->
+  <div id="screen-admin" class="screen">
     <div class="header">
-      <span class="header-title">報告</span>
+      <span class="header-title">行政</span>
       <button class="header-btn" onclick="refreshData()" title="重新整理">↻</button>
     </div>
     <div class="scroll-content">
-      <div id="report-stats" class="report-stats"></div>
-      <button class="btn btn-primary" onclick="downloadReport()">⬇ 下載出席報告 (CSV)</button>
-      <button class="btn btn-secondary" onclick="goToSetup()" style="margin-top:12px">更換活動</button>
+
+      <!-- 活動設定 -->
+      <p class="admin-section-title">活動設定</p>
+      <div class="card">
+        <p class="label">貼上 Google 試算表網址：</p>
+        <input id="input-sheet-url" type="url"
+          placeholder="https://docs.google.com/spreadsheets/d/…"
+          class="text-input">
+        <p id="setup-error" class="msg-error" style="display:none"></p>
+        <button class="btn btn-primary" onclick="confirmSetup()">確認並載入</button>
+        <div id="share-box" style="display:none; margin-top:4px">
+          <p class="label">將以下網址分享給志工：</p>
+          <div class="share-url-row">
+            <code id="share-url" class="share-url"></code>
+          </div>
+          <button id="btn-copy" class="btn btn-secondary" onclick="copyUrl()">複製網址</button>
+        </div>
+      </div>
+      <div class="card hint-card">
+        <p class="hint-title">試算表欄位順序（A 到 F）：</p>
+        <table class="hint-table">
+          <tr><th>欄</th><th>名稱</th><th>說明</th></tr>
+          <tr><td>A</td><td>標題</td><td>QR 碼值（必填）</td></tr>
+          <tr><td>B</td><td>姓名</td><td></td></tr>
+          <tr><td>C</td><td>通訊地址</td><td></td></tr>
+          <tr><td>D</td><td>備註</td><td>紅字顯示</td></tr>
+          <tr><td>E</td><td>Checkin_Stamp</td><td>系統填入</td></tr>
+          <tr><td>F</td><td>Checkin_By</td><td>系統填入</td></tr>
+        </table>
+      </div>
+
+      <!-- 新增現場報到 -->
+      <p class="admin-section-title">新增現場報到</p>
+      <div class="card">
+        <p id="walkin-success" class="msg-success" style="display:none"></p>
+        <p id="walkin-error"   class="msg-error"   style="display:none"></p>
+        <p class="label">姓名 <span class="required">*</span></p>
+        <input id="walkin-name" type="text" class="text-input" placeholder="姓名（必填）">
+        <p class="label">通訊地址</p>
+        <input id="walkin-address" type="text" class="text-input" placeholder="（選填）">
+        <p class="label">備註</p>
+        <input id="walkin-notes" type="text" class="text-input">
+        <button class="btn btn-success" onclick="addWalkIn()">✓ 新增並報到</button>
+      </div>
+
+      <!-- 出席報告 -->
+      <p class="admin-section-title">出席報告</p>
+      <div class="card">
+        <div id="report-event-title" class="report-event-title"></div>
+        <div id="report-summary"     class="report-summary"></div>
+        <div id="report-stats"       class="report-stats"></div>
+        <button class="btn btn-primary" onclick="downloadReport()">⬇ 下載出席報告 (CSV)</button>
+      </div>
+
+      <!-- 允許名單 -->
+      <p class="admin-section-title">允許名單</p>
+      <div class="card">
+        <p class="label">允許名單試算表網址：</p>
+        <input id="input-allowlist-url" type="url" class="text-input"
+          placeholder="https://docs.google.com/spreadsheets/d/…">
+        <p id="allowlist-setup-error" class="msg-error" style="display:none"></p>
+        <button class="btn btn-secondary" onclick="saveAllowListSheet()">儲存設定</button>
+        <div id="allowlist-container"></div>
+        <div id="allowlist-add" style="display:none">
+          <p class="label" style="margin-top:4px">新增帳號：</p>
+          <input id="new-email" type="email" class="text-input" placeholder="example@gmail.com">
+          <p id="allowlist-add-error" class="msg-error" style="display:none"></p>
+          <button class="btn btn-primary" onclick="addAllowListEmail()">新增</button>
+        </div>
+      </div>
+
+      <!-- 信件產生器 -->
+      <p class="admin-section-title">信件產生器</p>
+      <div class="card">
+        <p class="admin-coming-soon">功能開發中，敬請期待</p>
+        <button class="btn btn-primary" disabled>產生信件</button>
+      </div>
+
     </div>
   </div>
 
@@ -157,9 +189,9 @@
     <button class="nav-btn" data-screen="screen-list" onclick="goTo('screen-list')">
       <span class="nav-icon">📋</span><span>總表</span>
     </button>
-    <button class="nav-btn" id="nav-report" data-screen="screen-report"
-      onclick="goTo('screen-report')" style="display:none">
-      <span class="nav-icon">📊</span><span>報告</span>
+    <button class="nav-btn" id="nav-admin" data-screen="screen-admin"
+      onclick="goTo('screen-admin')" style="display:none">
+      <span class="nav-icon">⚙️</span><span>行政</span>
     </button>
   </nav>
 
