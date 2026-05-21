@@ -295,10 +295,11 @@ html, body { height: 100%; overflow: hidden; font-family: 'Segoe UI', 'PingFang 
 
 /* ── Admin screen ──────────────────────────────────────────────────────────── */
 .admin-section-title {
-  font-size: 12px; font-weight: 700;
-  letter-spacing: 0.08em; text-transform: uppercase;
-  color: var(--text-muted);
-  padding: 4px 2px 0;
+  font-size: 15px; font-weight: 700;
+  color: var(--text);
+  padding: 6px 0 6px 12px;
+  border-left: 4px solid var(--primary);
+  margin-top: 4px;
 }
 
 .required { color: var(--danger); }

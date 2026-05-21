@@ -62,6 +62,7 @@
   <div id="screen-list" class="screen">
     <div class="header">
       <span class="header-title">總表</span>
+      <button class="header-btn" onclick="goTo('screen-walkin')" title="新增現場報到">＋</button>
       <button class="header-btn" onclick="refreshData()" title="重新整理">↻</button>
     </div>
     <div class="search-bar">
@@ -90,6 +91,27 @@
       </div>
       <button id="btn-manual-in"   class="btn btn-success" onclick="manualCheckin()">手動報到</button>
       <button id="btn-manual-undo" class="btn btn-danger"  onclick="manualUndo()">取消報到</button>
+    </div>
+  </div>
+
+  <!-- ── Screen: Walk-in (all users) ────────────────────────────────────── -->
+  <div id="screen-walkin" class="screen">
+    <div class="header">
+      <button class="header-btn" onclick="goTo('screen-list')">←</button>
+      <span class="header-title">新增現場報到</span>
+    </div>
+    <div class="scroll-content">
+      <div class="card">
+        <p id="walkin-success" class="msg-success" style="display:none"></p>
+        <p id="walkin-error"   class="msg-error"   style="display:none"></p>
+        <p class="label">姓名 <span class="required">*</span></p>
+        <input id="walkin-name" type="text" class="text-input" placeholder="姓名（必填）">
+        <p class="label">通訊地址</p>
+        <input id="walkin-address" type="text" class="text-input" placeholder="（選填）">
+        <p class="label">備註</p>
+        <input id="walkin-notes" type="text" class="text-input">
+        <button class="btn btn-success" onclick="addWalkIn()">✓ 新增並報到</button>
+      </div>
     </div>
   </div>
 
@@ -129,20 +151,6 @@
           <tr><td>E</td><td>Checkin_Stamp</td><td>系統填入</td></tr>
           <tr><td>F</td><td>Checkin_By</td><td>系統填入</td></tr>
         </table>
-      </div>
-
-      <!-- 新增現場報到 -->
-      <p class="admin-section-title">新增現場報到</p>
-      <div class="card">
-        <p id="walkin-success" class="msg-success" style="display:none"></p>
-        <p id="walkin-error"   class="msg-error"   style="display:none"></p>
-        <p class="label">姓名 <span class="required">*</span></p>
-        <input id="walkin-name" type="text" class="text-input" placeholder="姓名（必填）">
-        <p class="label">通訊地址</p>
-        <input id="walkin-address" type="text" class="text-input" placeholder="（選填）">
-        <p class="label">備註</p>
-        <input id="walkin-notes" type="text" class="text-input">
-        <button class="btn btn-success" onclick="addWalkIn()">✓ 新增並報到</button>
       </div>
 
       <!-- 出席報告 -->

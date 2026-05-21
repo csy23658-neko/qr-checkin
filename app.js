@@ -20,10 +20,6 @@ const state = {
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 window.addEventListener('load', () => {
-  // Set default walk-in notes
-  const notesEl = document.getElementById('walkin-notes');
-  if (notesEl) notesEl.value = '現場報到，已核實身分';
-
   // If allow list is already configured, update placeholder
   if (state.allowListSheetId) {
     const urlInput = document.getElementById('input-allowlist-url');
@@ -702,6 +698,14 @@ async function removeAllowListEmail(rowIndex) {
   }
 }
 
+function resetWalkInForm() {
+  hideError('walkin-error');
+  document.getElementById('walkin-success').style.display = 'none';
+  document.getElementById('walkin-name').value    = '';
+  document.getElementById('walkin-address').value = '';
+  document.getElementById('walkin-notes').value   = '現場報到，已核實身分';
+}
+
 // ── Navigation ────────────────────────────────────────────────────────────────
 
 function goTo(screenId) {
@@ -718,9 +722,10 @@ function goTo(screenId) {
 
   state.currentScreen = screenId;
 
-  if (screenId === 'screen-scan')  startScanner();
-  if (screenId === 'screen-list')  renderList();
-  if (screenId === 'screen-admin') renderAdmin();
+  if (screenId === 'screen-scan')   startScanner();
+  if (screenId === 'screen-list')   renderList();
+  if (screenId === 'screen-walkin') resetWalkInForm();
+  if (screenId === 'screen-admin')  renderAdmin();
 }
 
 function showScreen(id) {
