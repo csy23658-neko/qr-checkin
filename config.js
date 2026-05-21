@@ -5,6 +5,7 @@ const CONFIG = {
   // Admin emails — full access to the 行政 tab
   ADMINS: ['csy23658@gmail.com'],
 
-  // Volunteer access is managed via the Allow List Google Sheet
-  // (set up in the 行政 → 允許名單 section)
+  // Allow List sheet ID — Google Sheet listing permitted volunteer emails
+  // Sheet must be shared: "Anyone with the link can view"
+  ALLOW_LIST_SHEET_ID: '1A7Y0S-I0VTaGrC-DFOscAd9QDu_WKw7b4bnVLd8KrU4',
 };

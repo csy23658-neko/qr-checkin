@@ -8,7 +8,7 @@ const state = {
   role:             null,   // 'admin' | 'volunteer'
   sheetId:          null,
   spreadsheetTitle: null,
-  allowListSheetId: localStorage.getItem('allowListSheetId') || null,
+  allowListSheetId: CONFIG.ALLOW_LIST_SHEET_ID || null,
   rows:             [],     // [{ rowIndex, id, name, address, notes, checkinStamp, checkinBy }]
   selectedRow:      null,
   scanner:          null,
@@ -20,12 +20,6 @@ const state = {
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 window.addEventListener('load', () => {
-  // If allow list is already configured, update placeholder
-  if (state.allowListSheetId) {
-    const urlInput = document.getElementById('input-allowlist-url');
-    if (urlInput) urlInput.placeholder = '已設定（貼上新網址以更換）';
-  }
-
   const poll = setInterval(() => {
     if (typeof google !== 'undefined' && google.accounts) {
       clearInterval(poll);
@@ -609,39 +603,20 @@ async function loadAllowListEmails() {
     .filter(e => e.email);
 }
 
-function saveAllowListSheet() {
-  hideError('allowlist-setup-error');
-  const url = document.getElementById('input-allowlist-url').value.trim();
-  const m   = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-  if (!m) { showError('allowlist-setup-error', '網址格式不正確，請重新貼上 Google 試算表網址。'); return; }
-
-  state.allowListSheetId = m[1];
-  localStorage.setItem('allowListSheetId', state.allowListSheetId);
-
-  const urlInput = document.getElementById('input-allowlist-url');
-  urlInput.value       = '';
-  urlInput.placeholder = '已設定（貼上新網址以更換）';
-
-  renderAllowListSection();
-}
 
 async function renderAllowListSection() {
   const container = document.getElementById('allowlist-container');
-  const addBox    = document.getElementById('allowlist-add');
   if (!container) return;
 
   if (!state.allowListSheetId) {
-    container.innerHTML  = '';
-    addBox.style.display = 'none';
+    container.innerHTML = '<p class="msg-error">未設定允許名單（請更新 config.js）</p>';
     return;
   }
 
-  container.innerHTML  = '<p class="allowlist-loading">載入中…</p>';
-  addBox.style.display = 'none';
+  container.innerHTML = '<p class="allowlist-loading">載入中…</p>';
 
   try {
     const emails = await loadAllowListEmails();
-    addBox.style.display = '';
     hideError('allowlist-add-error');
 
     if (emails.length === 0) {

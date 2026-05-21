@@ -165,14 +165,9 @@
       <!-- 允許名單 -->
       <p class="admin-section-title">允許名單</p>
       <div class="card">
-        <p class="label">允許名單試算表網址：</p>
-        <input id="input-allowlist-url" type="url" class="text-input"
-          placeholder="https://docs.google.com/spreadsheets/d/…">
-        <p id="allowlist-setup-error" class="msg-error" style="display:none"></p>
-        <button class="btn btn-secondary" onclick="saveAllowListSheet()">儲存設定</button>
         <div id="allowlist-container"></div>
-        <div id="allowlist-add" style="display:none">
-          <p class="label" style="margin-top:4px">新增帳號：</p>
+        <div id="allowlist-add">
+          <p class="label">新增帳號：</p>
           <input id="new-email" type="email" class="text-input" placeholder="example@gmail.com">
           <p id="allowlist-add-error" class="msg-error" style="display:none"></p>
           <button class="btn btn-primary" onclick="addAllowListEmail()">新增</button>
