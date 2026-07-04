@@ -344,3 +344,50 @@ html, body { height: 100%; overflow: hidden; font-family: 'Segoe UI', 'PingFang 
   font-size: 14px; color: var(--text-muted);
   text-align: center; padding: 8px 0;
 }
+
+/* ── Admin: current event / sharing ────────────────────────────────────────── */
+.event-open-link {
+  display: inline-block;
+  font-size: 14px; color: var(--primary);
+  font-weight: 600; text-decoration: none;
+  margin-top: 4px;
+}
+.divider {
+  border: none; border-top: 1px solid var(--border);
+  margin: 6px 0;
+}
+.share-qr {
+  display: flex; justify-content: center;
+  padding: 8px 0 4px;
+}
+.share-qr svg {
+  width: 150px; height: 150px;
+  border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px;
+  background: #fff;
+}
+
+/* Recent events */
+.recent-event-row {
+  display: flex; width: 100%;
+  align-items: center; justify-content: space-between;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px;
+  margin-top: 8px; cursor: pointer;
+  font-size: 15px; text-align: left;
+}
+.recent-event-row:active { background: #e8edf7; }
+.recent-event-title { font-weight: 600; color: var(--text); flex: 1; margin-right: 8px; word-break: break-all; }
+.recent-event-date  { font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
+
+/* Advanced (paste URL) */
+details.advanced { margin-top: 6px; }
+details.advanced summary {
+  font-size: 13px; color: var(--text-muted);
+  cursor: pointer; padding: 6px 0;
+}
+details.advanced[open] summary { color: var(--primary); font-weight: 600; }
+details.advanced .label, details.advanced .text-input, details.advanced .btn { margin-top: 8px; }
+
+/* Scan: walk-in shortcut */
+#scan-walkin-btn { width: 100%; }

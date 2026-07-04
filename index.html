@@ -43,10 +43,12 @@
       <span id="scan-clock" class="header-clock"></span>
     </div>
     <div class="scan-content">
-      <div id="result-banner" class="result-banner result-idle">
+      <div id="result-banner" class="result-banner result-idle" onclick="dismissScanResult()">
         <div id="result-main" class="result-main">準備掃描</div>
         <div id="result-detail" class="result-detail"></div>
       </div>
+      <button id="scan-walkin-btn" class="btn btn-secondary" style="display:none"
+        onclick="goTo('screen-walkin')">＋ 新增為現場報到</button>
       <div id="scan-info" class="scan-info" style="display:none">
         <div id="scan-info-id"      class="info-id"></div>
         <div id="scan-info-name"    class="info-name"></div>
@@ -123,48 +125,72 @@
     </div>
     <div class="scroll-content">
 
-      <!-- 活動設定 -->
-      <p class="admin-section-title">活動設定</p>
+      <!-- 目前活動 -->
+      <p class="admin-section-title">目前活動</p>
       <div class="card">
-        <p class="label">貼上 Google 試算表網址：</p>
-        <input id="input-sheet-url" type="url"
-          placeholder="https://docs.google.com/spreadsheets/d/…"
-          class="text-input">
-        <p id="setup-error" class="msg-error" style="display:none"></p>
-        <button class="btn btn-primary" onclick="confirmSetup()">確認並載入</button>
-        <div id="share-box" style="display:none; margin-top:4px">
-          <p class="label">將以下網址分享給志工：</p>
+        <div id="event-none">
+          <p class="msg-empty" style="padding:8px 0">尚未選擇活動。<br>請在下方「建立或切換活動」開始。</p>
+        </div>
+        <div id="event-info" style="display:none">
+          <div id="report-event-title" class="report-event-title"></div>
+          <div id="report-summary"     class="report-summary"></div>
+          <a id="event-open-link" class="event-open-link" href="#" target="_blank" rel="noopener">
+            📄 在 Google 試算表開啟名單 ↗</a>
+        </div>
+        <div id="share-box" style="display:none">
+          <hr class="divider">
+          <p class="label"><b>步驟 1</b>｜把名單共用給所有志工：</p>
+          <button class="btn btn-secondary" onclick="shareWithVolunteers()">👥 共用給志工帳號名單</button>
+          <p id="share-vols-msg" class="msg-success" style="display:none"></p>
+          <p class="label"><b>步驟 2</b>｜把活動連結傳給志工，或請他們掃描下方 QR 碼：</p>
           <div class="share-url-row">
             <code id="share-url" class="share-url"></code>
           </div>
-          <button id="btn-copy" class="btn btn-secondary" onclick="copyUrl()">複製網址</button>
+          <button id="btn-copy" class="btn btn-secondary" onclick="copyUrl()">📋 複製網址</button>
+          <div id="share-qr" class="share-qr"></div>
         </div>
       </div>
-      <div class="card hint-card">
-        <p class="hint-title">試算表欄位順序（A 到 F）：</p>
-        <table class="hint-table">
-          <tr><th>欄</th><th>名稱</th><th>說明</th></tr>
-          <tr><td>A</td><td>標題</td><td>QR 碼值（必填）</td></tr>
-          <tr><td>B</td><td>姓名</td><td></td></tr>
-          <tr><td>C</td><td>通訊地址</td><td></td></tr>
-          <tr><td>D</td><td>備註</td><td>紅字顯示</td></tr>
-          <tr><td>E</td><td>Checkin_Stamp</td><td>系統填入</td></tr>
-          <tr><td>F</td><td>Checkin_By</td><td>系統填入</td></tr>
-        </table>
+
+      <!-- 建立或切換活動 -->
+      <p class="admin-section-title">建立或切換活動</p>
+      <div class="card">
+        <p class="label">新活動名稱：</p>
+        <input id="input-event-name" type="text" class="text-input"
+          placeholder="例：2026 中秋敬老餐會">
+        <p id="create-error" class="msg-error" style="display:none"></p>
+        <button class="btn btn-primary" onclick="createEvent()">＋ 建立新活動</button>
+        <div id="recent-events"></div>
+        <details class="advanced">
+          <summary>進階：使用現有的 Google 試算表</summary>
+          <p class="label">欄位需依序為：A 標題（QR 碼值）、B 姓名、C 通訊地址、D 備註、E 報到時間、F 報到人員。</p>
+          <input id="input-sheet-url" type="url"
+            placeholder="https://docs.google.com/spreadsheets/d/…"
+            class="text-input">
+          <p id="setup-error" class="msg-error" style="display:none"></p>
+          <button class="btn btn-secondary" onclick="confirmSetup()">載入此試算表</button>
+        </details>
+      </div>
+
+      <!-- 參加者 QR 碼 -->
+      <p class="admin-section-title">參加者 QR 碼</p>
+      <div class="card">
+        <p class="label">在名單填好參加者後，按這裡產生可列印的 QR 碼（缺少編號的會自動補上）。</p>
+        <p id="qrgen-error" class="msg-error" style="display:none"></p>
+        <button class="btn btn-primary" onclick="generateQrCards()">🖨 產生 QR 碼（列印）</button>
       </div>
 
       <!-- 出席報告 -->
       <p class="admin-section-title">出席報告</p>
       <div class="card">
-        <div id="report-event-title" class="report-event-title"></div>
-        <div id="report-summary"     class="report-summary"></div>
-        <div id="report-stats"       class="report-stats"></div>
-        <button class="btn btn-primary" onclick="downloadReport()">⬇ 下載出席報告 (CSV)</button>
+        <div id="report-stats" class="report-stats"></div>
+        <button class="btn btn-primary"   onclick="printReport()">🖨 列印出席報告</button>
+        <button class="btn btn-secondary" onclick="downloadReport()">⬇ 下載 CSV（可用 Excel 開啟）</button>
       </div>
 
-      <!-- 允許名單 -->
-      <p class="admin-section-title">允許名單</p>
+      <!-- 志工帳號 -->
+      <p class="admin-section-title">志工帳號</p>
       <div class="card">
+        <p class="label">列在這裡的 Google 帳號才能登入使用本系統。</p>
         <div id="allowlist-container"></div>
         <div id="allowlist-add">
           <p class="label">新增帳號：</p>
@@ -201,6 +227,7 @@
   <script src="config.js"></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
