@@ -2,5 +2,8 @@
   "name": "qr-checkin-api-staging",
   "main": "src/index.js",
   "compatibility_date": "2026-08-01",
-  "vars": { "ALLOWED_ORIGINS": "https://qr-checkin-3iv.pages.dev" }
+  "vars": {
+    "ALLOWED_ORIGINS": "https://qr-checkin-3iv.pages.dev",
+    "GOOGLE_CLIENT_ID": "234893329401-s9cnhole5d3q885do2b5349btlifk46r.apps.googleusercontent.com"
+  }
 }
