@@ -302,6 +302,53 @@ html, body { height: 100%; overflow: hidden; font-family: 'Segoe UI', 'PingFang 
   margin-top: 4px;
 }
 
+/* ── Desktop-first admin dashboard ───────────────────────────────────────── */
+.admin-dashboard { gap: 16px; }
+.dashboard-hero {
+  background: linear-gradient(125deg, #2a4a8e, #4f78ca);
+  color: #fff; border-radius: 16px; padding: 22px;
+  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  box-shadow: 0 8px 22px rgba(42, 74, 142, .22);
+}
+.dashboard-eyebrow { font-size: 13px; opacity: .78; font-weight: 600; letter-spacing: .08em; }
+.dashboard-hero h2 { margin-top: 4px; font-size: 24px; line-height: 1.25; }
+.dashboard-hero p:not(.dashboard-eyebrow) { margin-top: 7px; font-size: 14px; opacity: .88; }
+.btn-hero { width: auto; flex-shrink: 0; padding: 12px 18px; font-size: 15px; background: #fff; color: var(--primary-dark); }
+.admin-panel { min-width: 0; gap: 12px; }
+.admin-panel-heading { display: flex; align-items: center; gap: 10px; }
+.admin-panel-icon {
+  width: 40px; height: 40px; flex-shrink: 0; border-radius: 10px;
+  display: grid; place-items: center; background: #e8edf7; font-size: 20px;
+}
+.admin-panel-heading h3 { font-size: 17px; line-height: 1.25; }
+.admin-panel-heading p { margin-top: 2px; color: var(--text-muted); font-size: 13px; }
+
+@media (min-width: 900px) {
+  #screen-admin .header { height: 64px; padding: 0 max(32px, calc((100vw - 1240px) / 2)); }
+  #screen-admin .scroll-content {
+    width: min(1240px, 100%); margin: 0 auto; padding: 28px 32px 40px;
+    display: grid; grid-template-columns: repeat(12, minmax(0, 1fr));
+    align-content: start; gap: 18px; overflow-y: auto;
+  }
+  .dashboard-hero { grid-column: 1 / -1; padding: 28px 30px; }
+  .dashboard-hero h2 { font-size: 28px; }
+  .admin-panel-current { grid-column: span 7; }
+  .admin-panel-events { grid-column: span 5; }
+  .admin-panel-print, .admin-panel-report { grid-column: span 6; }
+  .admin-panel-volunteers { grid-column: span 8; }
+  .admin-panel-disabled { grid-column: span 4; }
+  .admin-panel .btn { font-size: 15px; }
+  .dashboard-scan-link { display: block; }
+  #screen-admin.active ~ #app-nav { display: none !important; }
+}
+
+@media (max-width: 899px) {
+  .dashboard-hero { padding: 18px; align-items: flex-start; }
+  .dashboard-hero h2 { font-size: 20px; }
+  .dashboard-hero .btn-hero { display: none; }
+  .dashboard-scan-link { display: none; }
+}
+
 .required { color: var(--danger); }
 
 .report-event-title {
@@ -388,6 +435,7 @@ details.advanced summary {
 }
 details.advanced[open] summary { color: var(--primary); font-weight: 600; }
 details.advanced .label, details.advanced .text-input, details.advanced .btn { margin-top: 8px; }
+.file-input { padding: 10px; margin-top: 8px; }
 
 /* Scan: walk-in shortcut */
 #scan-walkin-btn { width: 100%; }

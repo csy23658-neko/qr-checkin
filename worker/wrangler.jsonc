@@ -1,0 +1,6 @@
+{
+  "name": "qr-checkin-api-staging",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-01",
+  "vars": { "ALLOWED_ORIGINS": "https://staging.example.pages.dev" }
+}

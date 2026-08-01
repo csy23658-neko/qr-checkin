@@ -1,0 +1,7 @@
+# Never commit the real .dev.vars file.
+GOOGLE_CLIENT_ID="replace-with-the-web-oauth-client-id"
+GOOGLE_SERVICE_ACCOUNT_JSON='{"type":"service_account","client_email":"...@...iam.gserviceaccount.com","private_key":"-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"}'
+ADMIN_EMAILS="admin@example.org"
+ALLOW_LIST_SHEET_ID="private-volunteer-allow-list-sheet-id"
+EVENT_REGISTRY_SHEET_ID="private-event-registry-sheet-id"
+ALLOWED_ORIGINS="http://localhost:4173,https://staging.example.pages.dev"

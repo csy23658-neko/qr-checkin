@@ -14,6 +14,8 @@ const ASSETS = [
   './icon-512.png',
   'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js',
   'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js',
+  'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+  './活動名單範本.xlsx',
 ];
 
 self.addEventListener('install', e => {

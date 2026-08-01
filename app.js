@@ -3,12 +3,12 @@
 // ── State ─────────────────────────────────────────────────────────────────────
 
 const state = {
-  accessToken:      null,
+  idToken:          null,
   user:             null,   // { email, name }
   role:             null,   // 'admin' | 'volunteer'
   sheetId:          null,
   spreadsheetTitle: null,
-  allowListSheetId: CONFIG.ALLOW_LIST_SHEET_ID || null,
+  allowListSheetId: null,
   rows:             [],     // [{ rowIndex, id, name, address, notes, checkinStamp, checkinBy }]
   selectedRow:      null,
   scanner:          null,
@@ -33,63 +33,27 @@ window.addEventListener('load', () => {
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
-let tokenClient;
-
 function initAuth() {
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id:      CONFIG.GOOGLE_CLIENT_ID,
-    scope:          'openid email profile https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file',
-    callback:       onTokenReceived,
-    error_callback: () => showLoginError('登入失敗，請重試。'),
+  google.accounts.id.initialize({
+    client_id: CONFIG.GOOGLE_CLIENT_ID,
+    callback: onGoogleCredential,
+    auto_select: false,
   });
 }
 
 function signIn() {
-  tokenClient.requestAccessToken({ prompt: 'select_account' });
+  google.accounts.id.prompt();
 }
 
-async function onTokenReceived(resp) {
-  if (resp.error) { showLoginError('登入失敗：' + resp.error); return; }
-
-  state.accessToken = resp.access_token;
-
-  // Silent refresh 2 min before expiry
-  setTimeout(() => tokenClient.requestAccessToken({ prompt: '' }),
-    (resp.expires_in - 120) * 1000);
-
-  // Get user info
-  let info;
+async function onGoogleCredential(resp) {
+  state.idToken = resp.credential;
   try {
-    const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo',
-      { headers: { Authorization: `Bearer ${state.accessToken}` } });
-    info = await r.json();
-  } catch { showLoginError('無法取得使用者資訊，請重試。'); return; }
-
-  const email  = (info.email || '').toLowerCase();
-  const admins = CONFIG.ADMINS.map(e => e.toLowerCase());
-
-  if (admins.includes(email)) {
-    state.role = 'admin';
-  } else {
-    // Check allow list
     setLoading(true);
-    let permitted = false;
-    try {
-      permitted = await checkAllowList(email);
-    } catch {
-      setLoading(false);
-      showLoginError('無法驗證使用者權限，請稍後再試。');
-      return;
-    }
-    setLoading(false);
-    if (!permitted) {
-      showLoginError(`您的帳號（${email}）沒有使用此系統的權限。`);
-      return;
-    }
-    state.role = 'volunteer';
-  }
-
-  state.user = { email, name: info.name || email };
+    const session = await apiAction('session');
+    state.user = session.user;
+    state.role = session.user.role;
+  } catch (error) { showLoginError(error.message || '登入失敗。'); return; }
+  finally { setLoading(false); }
 
   // Show admin nav tab for admins
   if (state.role === 'admin') {
@@ -111,6 +75,17 @@ async function onTokenReceived(resp) {
   }
 }
 
+async function apiAction(action, payload = {}) {
+  const response = await fetch((CONFIG.API_BASE_URL || '') + '/api', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.idToken}` },
+    body: JSON.stringify({ action, ...payload }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || `API error (${response.status})`);
+  return result;
+}
+
 async function checkAllowList(email) {
   if (!state.allowListSheetId) return false;
   const emails = await loadAllowListEmails();
@@ -119,7 +94,76 @@ async function checkAllowList(email) {
 
 // ── Event Setup ───────────────────────────────────────────────────────────────
 
-const EVENT_HEADERS = ['標題', '姓名', '通訊地址', '備註', '報到時間', '報到人員'];
+const EVENT_HEADERS = ['編號', '姓名', '通訊地址', '備註', '報到時間', '報到人員'];
+const IMPORT_HEADERS = EVENT_HEADERS.slice(0, 4);
+
+function downloadActivityTemplate() {
+  const a = document.createElement('a');
+  a.href = '活動名單範本.xlsx';
+  a.download = '活動名單範本.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function downloadMergeList() {
+  if (!state.sheetId) { alert('請先建立或選擇活動。'); return; }
+  if (typeof XLSX === 'undefined') { alert('匯出工具尚未載入，請重新整理後再試。'); return; }
+  const ids = state.rows.map(r => r.id);
+  if (new Set(ids).size !== ids.length) { alert('名單中有重複編號，請修正後再匯出。'); return; }
+  const rows = [IMPORT_HEADERS, ...state.rows.map(r => [r.id, r.name, r.address, r.notes])];
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  sheet['!cols'] = [{ wch: 18 }, { wch: 16 }, { wch: 34 }, { wch: 26 }];
+  for (let row = 1; row <= rows.length; row++) {
+    for (let col = 0; col < IMPORT_HEADERS.length; col++) {
+      const cell = sheet[XLSX.utils.encode_cell({ r: row - 1, c: col })];
+      if (cell) cell.z = '@';
+    }
+  }
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, sheet, '名單');
+  XLSX.writeFile(book, `${state.spreadsheetTitle || '活動'}_Word合併列印名單.xlsx`);
+}
+
+async function importActivityTemplate() {
+  hideError('create-error');
+  const name = document.getElementById('input-event-name').value.trim();
+  const file = document.getElementById('input-activity-file').files[0];
+  if (!name) { showError('create-error', '請輸入活動名稱。'); return; }
+  if (!file) { showError('create-error', '請選擇已填寫的活動名單範本。'); return; }
+  if (typeof XLSX === 'undefined') { showError('create-error', '匯入工具尚未載入，請重新整理後再試。'); return; }
+
+  setLoading(true);
+  try {
+    const book = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+    const sheet = book.Sheets['名單'] || book.Sheets[book.SheetNames[0]];
+    if (!sheet) throw new Error('找不到名為「名單」的工作表。');
+    const values = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+    const headers = (values[0] || []).slice(0, 4).map(v => String(v).trim());
+    if (headers.join('|') !== IMPORT_HEADERS.join('|')) {
+      throw new Error('欄位必須依序為：編號、姓名、通訊地址、備註。');
+    }
+
+    const seen = new Set();
+    const attendees = values.slice(1).map((row, i) => {
+      const item = row.slice(0, 4).map(value => String(value ?? '').trim());
+      if (item.every(value => !value)) return null;
+      if (!item[0]) throw new Error(`第 ${i + 2} 列缺少編號。`);
+      if (!item[1]) throw new Error(`第 ${i + 2} 列缺少姓名。`);
+      if (seen.has(item[0])) throw new Error(`編號「${item[0]}」重複。`);
+      seen.add(item[0]);
+      return item;
+    }).filter(Boolean);
+    if (!attendees.length) throw new Error('名單沒有任何參與者資料。');
+
+    await createEventWithAttendees(name, attendees);
+    document.getElementById('input-activity-file').value = '';
+  } catch (err) {
+    showError('create-error', '匯入失敗：' + err.message);
+  } finally {
+    setLoading(false);
+  }
+}
 
 // One-click event creation: makes a new Google Sheet with the right columns,
 // then shares it with everyone on the volunteer allow list.
@@ -130,38 +174,22 @@ async function createEvent() {
 
   setLoading(true);
   try {
-    const created = await sheetsRequest('POST', '', {
-      properties: { title: name },
-      sheets: [{ properties: { title: '名單', gridProperties: { frozenRowCount: 1 } } }],
-    });
-    state.sheetId          = created.spreadsheetId;
-    state.spreadsheetTitle = name;
-    state.rows             = [];
-
-    await apiPut('A1:F1', [EVENT_HEADERS]);
-
-    // Bold header row (best-effort)
-    try {
-      const gid = created.sheets?.[0]?.properties?.sheetId ?? 0;
-      await sheetsRequest('POST', `/${state.sheetId}:batchUpdate`, {
-        requests: [{
-          repeatCell: {
-            range:  { sheetId: gid, startRowIndex: 0, endRowIndex: 1 },
-            cell:   { userEnteredFormat: { textFormat: { bold: true } } },
-            fields: 'userEnteredFormat.textFormat.bold',
-          },
-        }],
-      });
-    } catch {}
-
-    document.getElementById('input-event-name').value = '';
-    afterEventSelected();
-    await shareWithVolunteers(true);
+    await createEventWithAttendees(name, []);
   } catch (err) {
     showError('create-error', '建立失敗：' + err.message);
   } finally {
     setLoading(false);
   }
+}
+
+async function createEventWithAttendees(name, attendees) {
+    const created = await apiAction('event.create', { name, attendees: attendees.map(row => ({ id: row[0], name: row[1], address: row[2], notes: row[3] })) });
+    state.sheetId = created.sheetId;
+    state.spreadsheetTitle = created.title;
+    state.rows = created.rows;
+    document.getElementById('input-event-name').value = '';
+    afterEventSelected();
+    await shareWithVolunteers(true);
 }
 
 // Advanced: load an existing spreadsheet by URL
@@ -171,12 +199,12 @@ async function confirmSetup() {
   const m   = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   if (!m) { showError('setup-error', '網址格式不正確，請重新貼上 Google 試算表網址。'); return; }
 
-  state.sheetId = m[1];
-
   setLoading(true);
   try {
-    await loadRows();
-    state.spreadsheetTitle = await fetchSpreadsheetTitle(state.sheetId);
+    const imported = await apiAction('event.import', { sheetId: m[1] });
+    state.sheetId = imported.sheetId;
+    state.spreadsheetTitle = imported.title;
+    state.rows = imported.rows;
     document.getElementById('input-sheet-url').value = '';
     afterEventSelected();
   } catch (e) {
@@ -249,26 +277,11 @@ async function shareWithVolunteers(silent = false) {
   if (msgEl) msgEl.style.display = 'none';
 
   setLoading(true);
-  let ok = 0, fail = 0;
   try {
-    const emails = await loadAllowListEmails();
-    for (const e of emails) {
-      try {
-        const r = await fetch(
-          `https://www.googleapis.com/drive/v3/files/${state.sheetId}/permissions?sendNotificationEmail=false`,
-          {
-            method:  'POST',
-            headers: { Authorization: `Bearer ${state.accessToken}`, 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ role: 'writer', type: 'user', emailAddress: e.email }),
-          });
-        if (r.ok) ok++; else fail++;
-      } catch { fail++; }
-    }
+    const shared = await apiAction('event.share', { sheetId: state.sheetId });
     if (msgEl) {
-      msgEl.textContent = fail === 0
-        ? `✓ 已共用給 ${ok} 位志工`
-        : `已共用 ${ok} 位，${fail} 位失敗。若此試算表不是由本系統建立，請直接在 Google 試算表按「共用」加入志工。`;
-      msgEl.className     = fail === 0 ? 'msg-success' : 'msg-error';
+      msgEl.textContent = `✓ 已共用給 ${shared.shared} 位志工`;
+      msgEl.className = 'msg-success';
       msgEl.style.display = '';
     }
   } catch (err) {
@@ -312,87 +325,16 @@ async function enterApp() {
   }
 }
 
-// ── Sheets API ────────────────────────────────────────────────────────────────
-
-async function sheetsRequest(method, path, body) {
-  const opts = {
-    method,
-    headers: { Authorization: `Bearer ${state.accessToken}` },
-  };
-  if (body !== undefined) {
-    opts.headers['Content-Type'] = 'application/json';
-    opts.body = JSON.stringify(body);
-  }
-  const r = await fetch('https://sheets.googleapis.com/v4/spreadsheets' + path, opts);
-  if (!r.ok) {
-    const j  = await r.json().catch(() => ({}));
-    const e  = new Error(j.error?.message || `HTTP ${r.status}`);
-    e.status = r.status;
-    throw e;
-  }
-  return r.json();
-}
-
-// Event sheet helpers (use state.sheetId)
-function apiGet(range) {
-  return sheetsRequest('GET',
-    `/${state.sheetId}/values/${encodeURIComponent(range)}`);
-}
-function apiPut(range, values) {
-  return sheetsRequest('PUT',
-    `/${state.sheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
-    { range, majorDimension: 'ROWS', values });
-}
-function apiAppend(range, values) {
-  return sheetsRequest('POST',
-    `/${state.sheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
-    { majorDimension: 'ROWS', values });
-}
-
-// Generic sheet helpers (any sheetId)
-function sheetsGet(sheetId, range) {
-  return sheetsRequest('GET',
-    `/${sheetId}/values/${encodeURIComponent(range)}`);
-}
-function sheetsPut(sheetId, range, values) {
-  return sheetsRequest('PUT',
-    `/${sheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
-    { range, majorDimension: 'ROWS', values });
-}
-function sheetsAppend(sheetId, range, values) {
-  return sheetsRequest('POST',
-    `/${sheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
-    { majorDimension: 'ROWS', values });
-}
-
 async function fetchSpreadsheetTitle(sheetId) {
-  try {
-    const r = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=properties.title`,
-      { headers: { Authorization: `Bearer ${state.accessToken}` } }
-    );
-    if (!r.ok) return null;
-    const j = await r.json();
-    return j.properties?.title || null;
-  } catch { return null; }
+  try { return (await apiAction('event.get', { sheetId })).title || null; } catch { return null; }
 }
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
 async function loadRows() {
-  const result = await apiGet('A:F');
-  const all    = result.values || [];
-  state.rows = all.slice(1)
-    .map((r, i) => ({
-      rowIndex:    i + 2,
-      id:          (r[0] || '').trim(),
-      name:         r[1] || '',
-      address:      r[2] || '',
-      notes:        r[3] || '',
-      checkinStamp: r[4] || '',
-      checkinBy:    r[5] || '',
-    }))
-    .filter(r => r.id);
+  const event = await apiAction('event.get', { sheetId: state.sheetId });
+  state.spreadsheetTitle = event.title;
+  state.rows = event.rows;
 }
 
 async function refreshData() {
@@ -407,52 +349,19 @@ async function refreshData() {
 
 // ── Check-in Logic ────────────────────────────────────────────────────────────
 
-// Re-read the row before writing. Guards against:
-//  1. rows inserted/deleted/re-sorted in the sheet (stale rowIndex → wrong person)
-//  2. check-ins made from another device since our last load
-async function verifyRow(row) {
-  const res = await apiGet(`A${row.rowIndex}:F${row.rowIndex}`);
-  const cur = (res.values && res.values[0]) || [];
-
-  if ((cur[0] || '').trim() !== row.id) {
-    // Sheet rows have shifted — reload and re-locate this person by ID
-    await loadRows();
-    const fresh = state.rows.find(r => r.id === row.id);
-    if (!fresh) {
-      const e = new Error('找不到此筆資料，名單可能已被修改。');
-      e.code = 'gone';
-      throw e;
-    }
-    return fresh;
-  }
-  // Sync latest check-in state from the sheet
-  row.checkinStamp = cur[4] || '';
-  row.checkinBy    = cur[5] || '';
-  return row;
-}
-
 async function checkin(row, manual = false) {
-  row = await verifyRow(row);
-  if (row.checkinStamp) {
-    const e = new Error('already');
-    e.code = 'already';
-    e.row  = row;
-    throw e;
+  const result = await apiAction('checkin', { sheetId: state.sheetId, id: row.id, manual });
+  if (result.already) {
+    const error = new Error('already');
+    error.code = 'already';
+    error.row = result.row;
+    throw error;
   }
-  const stamp = nowString();
-  const by    = state.user.name + (manual ? ' 手動' : '');
-  await apiPut(`E${row.rowIndex}:F${row.rowIndex}`, [[stamp, by]]);
-  row.checkinStamp = stamp;
-  row.checkinBy    = by;
-  return row;
+  return result.row;
 }
 
 async function undoCheckin(row) {
-  row = await verifyRow(row);
-  await apiPut(`E${row.rowIndex}:F${row.rowIndex}`, [['', '']]);
-  row.checkinStamp = '';
-  row.checkinBy    = '';
-  return row;
+  return (await apiAction('undo', { sheetId: state.sheetId, id: row.id })).row;
 }
 
 // ── Auto-refresh (keeps multi-device data in sync) ────────────────────────────
@@ -742,6 +651,12 @@ async function manualUndo() {
 function renderAdmin() {
   renderAdminReport();
   renderAllowListSection(); // async, self-managing
+  const title = document.getElementById('dashboard-title');
+  const subtitle = document.getElementById('dashboard-subtitle');
+  if (title) title.textContent = state.spreadsheetTitle || '建立並管理您的活動';
+  if (subtitle) subtitle.textContent = state.sheetId
+    ? '活動名單、列印、志工授權與出席報告皆集中在這裡。'
+    : '先建立新活動或匯入填好的名單範本，即可開始管理。';
 }
 
 // ── Report (within Admin) ─────────────────────────────────────────────────────
@@ -803,34 +718,14 @@ function renderShareQr() {
 
 // ── Attendee QR codes ─────────────────────────────────────────────────────────
 
-// Fill in IDs for attendees that have a name but no QR value in column A
+// A participant number is assigned by the event organizer and must never change.
 async function ensureIds() {
-  const res  = await apiGet('A:F');
-  const all  = res.values || [];
-  const used = new Set(all.slice(1).map(r => (r[0] || '').trim()).filter(Boolean));
-
-  let n = 1;
-  const nextId = () => {
-    let id;
-    do { id = 'A' + String(n++).padStart(3, '0'); } while (used.has(id));
-    used.add(id);
-    return id;
-  };
-
-  const data = [];
-  all.slice(1).forEach((r, i) => {
-    const hasName = (r[1] || '').trim();
-    const hasId   = (r[0] || '').trim();
-    if (hasName && !hasId) {
-      data.push({ range: `A${i + 2}`, majorDimension: 'ROWS', values: [[nextId()]] });
-    }
-  });
-
-  if (data.length) {
-    await sheetsRequest('POST', `/${state.sheetId}/values:batchUpdate`,
-      { valueInputOption: 'RAW', data });
+  const used = new Set(state.rows.map(row => row.id).filter(Boolean));
+  const missing = state.rows.filter(row => row.name && !row.id).map(row => row.rowIndex);
+  if (missing.length) throw new Error(`第 ${missing.join('、')} 列缺少編號；編號必須由活動方編入且不可自動產生。`);
+  if (used.size !== state.rows.length) {
+    throw new Error('名單中有重複編號，請修正後再列印。');
   }
-  return data.length;
 }
 
 async function generateQrCards() {
@@ -935,7 +830,7 @@ function printReport() {
 
 function downloadReport() {
   if (!state.sheetId) { alert('請先建立或選擇活動。'); return; }
-  const header  = ['標題', '姓名', '通訊地址', '備註', '報到時間', '報到人員'];
+  const header  = EVENT_HEADERS;
   const csvRows = [
     header,
     ...state.rows.map(r => [r.id, r.name, r.address, r.notes, r.checkinStamp, r.checkinBy]),
@@ -976,17 +871,8 @@ async function addWalkIn() {
 
   setLoading(true);
   try {
-    const id     = generateWalkInId();
-    const stamp  = nowString();
-    const by     = state.user.name + ' 手動';
-
-    const result = await apiAppend('A:F', [[id, name, address, notes, stamp, by]]);
-
-    // Parse actual row index from the API response
-    const rangeMatch = (result.updates?.updatedRange || '').match(/!A(\d+)/);
-    const rowIndex   = rangeMatch ? parseInt(rangeMatch[1]) : (state.rows.length + 2);
-
-    state.rows.push({ rowIndex, id, name, address, notes, checkinStamp: stamp, checkinBy: by });
+    const result = await apiAction('walkin.add', { sheetId: state.sheetId, name, address, notes });
+    state.rows = result.rows;
 
     // Reset form (keep notes default)
     document.getElementById('walkin-name').value    = '';
@@ -1009,22 +895,13 @@ async function addWalkIn() {
 // ── Allow List ────────────────────────────────────────────────────────────────
 
 async function loadAllowListEmails() {
-  const result = await sheetsGet(state.allowListSheetId, 'A:A');
-  const all    = result.values || [];
-  return all.slice(1)
-    .map((r, i) => ({ rowIndex: i + 2, email: (r[0] || '').trim().toLowerCase() }))
-    .filter(e => e.email);
+  return (await apiAction('allowlist', { method: 'GET' })).entries;
 }
 
 
 async function renderAllowListSection() {
   const container = document.getElementById('allowlist-container');
   if (!container) return;
-
-  if (!state.allowListSheetId) {
-    container.innerHTML = '<p class="msg-error">未設定允許名單（請更新 config.js）</p>';
-    return;
-  }
 
   container.innerHTML = '<p class="allowlist-loading">載入中…</p>';
 
@@ -1042,7 +919,7 @@ async function renderAllowListSection() {
         ${emails.map(e => `
           <div class="allowlist-row">
             <span class="allowlist-email">${esc(e.email)}</span>
-            <button class="btn-icon-danger" onclick="removeAllowListEmail(${e.rowIndex})">✕</button>
+            <button class="btn-icon-danger" onclick="removeAllowListEmail('${esc(e.email)}')">✕</button>
           </div>
         `).join('')}
       </div>
@@ -1063,7 +940,7 @@ async function addAllowListEmail() {
 
   setLoading(true);
   try {
-    await sheetsAppend(state.allowListSheetId, 'A:A', [[email]]);
+    await apiAction('allowlist', { method: 'POST', email });
     input.value = '';
     await renderAllowListSection();
   } catch (err) {
@@ -1073,11 +950,11 @@ async function addAllowListEmail() {
   }
 }
 
-async function removeAllowListEmail(rowIndex) {
+async function removeAllowListEmail(email) {
   if (!confirm('確定要移除此帳號？')) return;
   setLoading(true);
   try {
-    await sheetsPut(state.allowListSheetId, `A${rowIndex}`, [['']]);
+    await apiAction('allowlist', { method: 'DELETE', email });
     await renderAllowListSection();
   } catch (err) {
     alert('移除失敗：' + err.message);

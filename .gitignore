@@ -1,2 +1,8 @@
 _extracted/
 *.msapp
+tools/node_modules/
+tools/template-runtime/
+tools/*預覽.png
+*.inspect.ndjson
+.dev.vars
+.wrangler/

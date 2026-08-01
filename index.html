@@ -120,14 +120,27 @@
   <!-- ── Screen: Admin 行政 ───────────────────────────────────────────────── -->
   <div id="screen-admin" class="screen">
     <div class="header">
-      <span class="header-title">行政</span>
+      <span class="header-title">活動管理後台</span>
+      <button class="header-btn dashboard-scan-link" onclick="goTo('screen-scan')" title="前往現場報到">📷</button>
       <button class="header-btn" onclick="refreshData()" title="重新整理">↻</button>
     </div>
-    <div class="scroll-content">
+    <div class="scroll-content admin-dashboard">
+
+      <div class="dashboard-hero">
+        <div>
+          <p class="dashboard-eyebrow">活動管理</p>
+          <h2 id="dashboard-title">建立並管理您的活動</h2>
+          <p id="dashboard-subtitle">從名單匯入、通知單列印到志工授權，都能在這裡完成。</p>
+        </div>
+        <button class="btn btn-hero" onclick="goTo('screen-scan')">前往現場報到</button>
+      </div>
 
       <!-- 目前活動 -->
-      <p class="admin-section-title">目前活動</p>
-      <div class="card">
+      <section class="card admin-panel admin-panel-current">
+        <div class="admin-panel-heading">
+          <span class="admin-panel-icon">📊</span>
+          <div><h3>目前活動</h3><p>掌握出席情況與活動資料</p></div>
+        </div>
         <div id="event-none">
           <p class="msg-empty" style="padding:8px 0">尚未選擇活動。<br>請在下方「建立或切換活動」開始。</p>
         </div>
@@ -139,8 +152,8 @@
         </div>
         <div id="share-box" style="display:none">
           <hr class="divider">
-          <p class="label"><b>步驟 1</b>｜把名單共用給所有志工：</p>
-          <button class="btn btn-secondary" onclick="shareWithVolunteers()">👥 共用給志工帳號名單</button>
+          <p class="label"><b>步驟 1</b>｜確認允許名單中的志工可使用此活動：</p>
+          <button class="btn btn-secondary" onclick="shareWithVolunteers()">👥 確認志工帳號名單</button>
           <p id="share-vols-msg" class="msg-success" style="display:none"></p>
           <p class="label"><b>步驟 2</b>｜把活動連結傳給志工，或請他們掃描下方 QR 碼：</p>
           <div class="share-url-row">
@@ -149,47 +162,65 @@
           <button id="btn-copy" class="btn btn-secondary" onclick="copyUrl()">📋 複製網址</button>
           <div id="share-qr" class="share-qr"></div>
         </div>
-      </div>
+      </section>
 
       <!-- 建立或切換活動 -->
-      <p class="admin-section-title">建立或切換活動</p>
-      <div class="card">
+      <section class="card admin-panel admin-panel-events">
+        <div class="admin-panel-heading">
+          <span class="admin-panel-icon">🗂️</span>
+          <div><h3>建立或切換活動</h3><p>建議在電腦完成名單建立與匯入</p></div>
+        </div>
         <p class="label">新活動名稱：</p>
         <input id="input-event-name" type="text" class="text-input"
           placeholder="例：2026 中秋敬老餐會">
         <p id="create-error" class="msg-error" style="display:none"></p>
         <button class="btn btn-primary" onclick="createEvent()">＋ 建立新活動</button>
+        <hr class="divider">
+        <p class="label"><b>從範本建立活動</b>｜先下載範本，在電腦以 Excel 填妥文字格式的編號、姓名、通訊地址與備註，再上傳建立活動。</p>
+        <button class="btn btn-secondary" onclick="downloadActivityTemplate()">⬇ 下載活動名單範本</button>
+        <input id="input-activity-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="text-input file-input">
+        <button class="btn btn-primary" onclick="importActivityTemplate()">⬆ 上傳範本並建立活動</button>
         <div id="recent-events"></div>
         <details class="advanced">
           <summary>進階：使用現有的 Google 試算表</summary>
-          <p class="label">欄位需依序為：A 標題（QR 碼值）、B 姓名、C 通訊地址、D 備註、E 報到時間、F 報到人員。</p>
+          <p class="label">欄位需依序為：A 編號、B 姓名、C 通訊地址、D 備註、E 報到時間、F 報到人員。</p>
           <input id="input-sheet-url" type="url"
             placeholder="https://docs.google.com/spreadsheets/d/…"
             class="text-input">
           <p id="setup-error" class="msg-error" style="display:none"></p>
           <button class="btn btn-secondary" onclick="confirmSetup()">載入此試算表</button>
         </details>
-      </div>
+      </section>
 
       <!-- 參加者 QR 碼 -->
-      <p class="admin-section-title">參加者 QR 碼</p>
-      <div class="card">
-        <p class="label">在名單填好參加者後，按這裡產生可列印的 QR 碼（缺少編號的會自動補上）。</p>
+      <section class="card admin-panel admin-panel-print">
+        <div class="admin-panel-heading">
+          <span class="admin-panel-icon">🖨️</span>
+          <div><h3>通知單與 QR 碼</h3><p>輸出給 Word 合併列印與現場掃碼</p></div>
+        </div>
+        <p class="label">QR 碼內容為參與者編號。列印前會檢查每筆資料都有唯一編號；系統不會自動編號或改動既有編號。</p>
         <p id="qrgen-error" class="msg-error" style="display:none"></p>
         <button class="btn btn-primary" onclick="generateQrCards()">🖨 產生 QR 碼（列印）</button>
-      </div>
+        <button class="btn btn-secondary" onclick="downloadMergeList()">⬇ 下載 Word 合併列印名單（Excel）</button>
+      </section>
 
       <!-- 出席報告 -->
-      <p class="admin-section-title">出席報告</p>
-      <div class="card">
+      <section class="card admin-panel admin-panel-report">
+        <div class="admin-panel-heading">
+          <span class="admin-panel-icon">📈</span>
+          <div><h3>出席報告</h3><p>活動後列印或下載報到結果</p></div>
+        </div>
         <div id="report-stats" class="report-stats"></div>
         <button class="btn btn-primary"   onclick="printReport()">🖨 列印出席報告</button>
         <button class="btn btn-secondary" onclick="downloadReport()">⬇ 下載 CSV（可用 Excel 開啟）</button>
-      </div>
+      </section>
 
       <!-- 志工帳號 -->
-      <p class="admin-section-title">志工帳號</p>
-      <div class="card">
+      <section class="card admin-panel admin-panel-volunteers">
+        <div class="admin-panel-heading">
+          <span class="admin-panel-icon">👥</span>
+          <div><h3>志工帳號</h3><p>管理可登入並執行報到的人員</p></div>
+        </div>
         <p class="label">列在這裡的 Google 帳號才能登入使用本系統。</p>
         <div id="allowlist-container"></div>
         <div id="allowlist-add">
@@ -198,14 +229,17 @@
           <p id="allowlist-add-error" class="msg-error" style="display:none"></p>
           <button class="btn btn-primary" onclick="addAllowListEmail()">新增</button>
         </div>
-      </div>
+      </section>
 
       <!-- 信件產生器 -->
-      <p class="admin-section-title">信件產生器</p>
-      <div class="card">
+      <section class="card admin-panel admin-panel-disabled">
+        <div class="admin-panel-heading">
+          <span class="admin-panel-icon">✉️</span>
+          <div><h3>信件產生器</h3><p>後續可於此建立通知內容</p></div>
+        </div>
         <p class="admin-coming-soon">功能開發中，敬請期待</p>
         <button class="btn btn-primary" disabled>產生信件</button>
-      </div>
+      </section>
 
     </div>
   </div>
@@ -228,6 +262,7 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
