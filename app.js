@@ -176,11 +176,11 @@ async function createEvent() {
   const button = document.getElementById('btn-create-event');
   button.disabled = true;
   button.textContent = '建立活動中…';
-  setCreateStatus(`正在建立「${name}」的活動名單…`);
+  setCreateStatus(`正在建立「${name}」的空白活動資料表…`);
   setLoading(true);
   try {
     const created = await createEventWithAttendees(name, []);
-    setCreateStatus(`已建立「${created.title || name}」。您現在可以下載範本、填寫後再上傳名單。`);
+    setCreateStatus(`已建立「${created.title || name}」。請下載範本、填妥參與者資料後上傳匯入。`);
   } catch (err) {
     setCreateStatus('');
     showError('create-error', '建立失敗：' + err.message);
