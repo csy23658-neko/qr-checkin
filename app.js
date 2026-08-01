@@ -169,15 +169,24 @@ async function importActivityTemplate() {
 // then shares it with everyone on the volunteer allow list.
 async function createEvent() {
   hideError('create-error');
+  setCreateStatus('');
   const name = document.getElementById('input-event-name').value.trim();
   if (!name) { showError('create-error', '請輸入活動名稱。'); return; }
 
+  const button = document.getElementById('btn-create-event');
+  button.disabled = true;
+  button.textContent = '建立活動中…';
+  setCreateStatus(`正在建立「${name}」的活動名單…`);
   setLoading(true);
   try {
-    await createEventWithAttendees(name, []);
+    const created = await createEventWithAttendees(name, []);
+    setCreateStatus(`已建立「${created.title || name}」。您現在可以下載範本、填寫後再上傳名單。`);
   } catch (err) {
+    setCreateStatus('');
     showError('create-error', '建立失敗：' + err.message);
   } finally {
+    button.disabled = false;
+    button.textContent = '＋ 建立新活動';
     setLoading(false);
   }
 }
@@ -190,6 +199,7 @@ async function createEventWithAttendees(name, attendees) {
     document.getElementById('input-event-name').value = '';
     afterEventSelected();
     await shareWithVolunteers(true);
+    return created;
 }
 
 // Advanced: load an existing spreadsheet by URL
@@ -1043,6 +1053,13 @@ function showError(id, msg) {
   if (!el) return;
   el.textContent   = msg;
   el.style.display = '';
+}
+
+function setCreateStatus(message) {
+  const el = document.getElementById('create-status');
+  if (!el) return;
+  el.textContent = message;
+  el.style.display = message ? '' : 'none';
 }
 
 function hideError(id) {

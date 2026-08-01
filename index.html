@@ -166,7 +166,8 @@
         <input id="input-event-name" type="text" class="text-input"
           placeholder="例：2026 中秋敬老餐會">
         <p id="create-error" class="msg-error" style="display:none"></p>
-        <button class="btn btn-primary" onclick="createEvent()">＋ 建立新活動</button>
+        <p id="create-status" class="msg-success" role="status" style="display:none"></p>
+        <button id="btn-create-event" class="btn btn-primary" onclick="createEvent()">＋ 建立新活動</button>
         <hr class="divider">
         <p class="label"><b>從範本建立活動</b>｜先下載範本，在電腦以 Excel 填妥文字格式的編號、姓名、通訊地址與備註，再上傳建立活動。</p>
         <button class="btn btn-secondary" onclick="downloadActivityTemplate()">⬇ 下載活動名單範本</button>
