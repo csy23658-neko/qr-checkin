@@ -39,10 +39,10 @@ function initAuth() {
     callback: onGoogleCredential,
     auto_select: false,
   });
-}
-
-function signIn() {
-  google.accounts.id.prompt();
+  google.accounts.id.renderButton(document.getElementById('google-signin-button'), {
+    type: 'standard', theme: 'outline', size: 'large', text: 'signin_with',
+    shape: 'rectangular', logo_alignment: 'left', width: 304, locale: 'zh_TW',
+  });
 }
 
 async function onGoogleCredential(resp) {
