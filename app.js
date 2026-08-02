@@ -23,6 +23,10 @@ const state = {
 window.addEventListener('load', () => {
   const createButton = document.getElementById('btn-create-event');
   if (createButton) createButton.addEventListener('click', createEvent);
+  const downloadButton = document.getElementById('btn-download-template');
+  if (downloadButton) downloadButton.addEventListener('click', downloadActivityTemplate);
+  const importButton = document.getElementById('btn-import-template');
+  if (importButton) importButton.addEventListener('click', importActivityTemplate);
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
@@ -150,12 +154,18 @@ function downloadMergeList() {
 
 async function importActivityTemplate() {
   hideError('create-error');
+  hideError('import-error');
+  setImportStatus('');
   const name = document.getElementById('input-event-name').value.trim();
   const file = document.getElementById('input-activity-file').files[0];
-  if (!name) { showError('create-error', '請輸入活動名稱。'); return; }
-  if (!file) { showError('create-error', '請選擇已填寫的活動名單範本。'); return; }
-  if (typeof XLSX === 'undefined') { showError('create-error', '匯入工具尚未載入，請重新整理後再試。'); return; }
+  if (!state.sheetId && !name) { showError('import-error', '請先建立活動，或輸入活動名稱後再上傳。'); return; }
+  if (!file) { showError('import-error', '請選擇已填寫的活動名單範本。'); return; }
+  if (typeof XLSX === 'undefined') { showError('import-error', '匯入工具尚未載入，請重新整理後再試。'); return; }
 
+  const button = document.getElementById('btn-import-template');
+  button.disabled = true;
+  button.textContent = '正在上傳活動名單…';
+  setImportStatus(`正在讀取「${file.name}」…`);
   setLoading(true);
   try {
     const book = XLSX.read(await file.arrayBuffer(), { type: 'array' });
@@ -179,11 +189,28 @@ async function importActivityTemplate() {
     }).filter(Boolean);
     if (!attendees.length) throw new Error('名單沒有任何參與者資料。');
 
-    await createEventWithAttendees(name, attendees);
+    if (state.sheetId) {
+      setImportStatus(`正在將 ${attendees.length} 位參與者匯入「${state.spreadsheetTitle || '目前活動'}」…`);
+      const updated = await apiAction('event.roster.replace', {
+        sheetId: state.sheetId,
+        attendees: attendees.map(row => ({ id: row[0], name: row[1], address: row[2], notes: row[3] })),
+      });
+      state.spreadsheetTitle = updated.title;
+      state.rows = updated.rows;
+      afterEventSelected();
+      setImportStatus(`已成功匯入 ${attendees.length} 位參與者至「${updated.title}」。`);
+    } else {
+      setImportStatus(`正在建立「${name}」並匯入 ${attendees.length} 位參與者…`);
+      const created = await createEventWithAttendees(name, attendees);
+      setImportStatus(`已建立「${created.title || name}」，並成功匯入 ${attendees.length} 位參與者。`);
+    }
     document.getElementById('input-activity-file').value = '';
   } catch (err) {
-    showError('create-error', '匯入失敗：' + err.message);
+    setImportStatus('');
+    showError('import-error', '上傳失敗：' + err.message);
   } finally {
+    button.disabled = false;
+    button.textContent = '⬆ 上傳活動名單';
     setLoading(false);
   }
 }
@@ -203,6 +230,7 @@ async function createEvent() {
   setLoading(true);
   try {
     const created = await createEventWithAttendees(name, []);
+    hideError('create-error');
     setCreateStatus(`已建立「${created.title || name}」。請下載範本、填妥參與者資料後上傳匯入。`);
   } catch (err) {
     setCreateStatus('');
@@ -1081,6 +1109,13 @@ function showError(id, msg) {
 
 function setCreateStatus(message) {
   const el = document.getElementById('create-status');
+  if (!el) return;
+  el.textContent = message;
+  el.style.display = message ? '' : 'none';
+}
+
+function setImportStatus(message) {
+  const el = document.getElementById('import-status');
   if (!el) return;
   el.textContent = message;
   el.style.display = message ? '' : 'none';

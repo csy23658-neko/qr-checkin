@@ -81,6 +81,12 @@ async function append(env, sheetId, range, data) {
   });
 }
 
+async function clearValues(env, sheetId, range) {
+  return google(env, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}:clear`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+  });
+}
+
 async function userFrom(request, env) {
   const credential = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
   if (!credential) throw new Error('請先登入。');
@@ -154,6 +160,20 @@ async function createEvent(env, user, payload) {
   return event(env, created.spreadsheetId);
 }
 
+async function replaceRoster(env, user, payload) {
+  admin(user);
+  const sheetId = String(payload.sheetId || '').trim();
+  if (!sheetId) throw new Error('An activity must be selected before uploading a roster.');
+  await assertEvent(env, sheetId);
+  const attendees = payload.attendees || [];
+  validateRows(attendees);
+  const data = [['編號', '姓名', '通訊地址', '備註', '報到時間', '報到人員'],
+    ...attendees.map(row => [row.id, row.name, row.address || '', row.notes || '', '', ''])];
+  await clearValues(env, sheetId, 'A:F');
+  await put(env, sheetId, `A1:F${data.length}`, data);
+  return event(env, sheetId);
+}
+
 async function importEvent(env, user, payload) {
   admin(user);
   const sheetId = String(payload.sheetId || '').trim();
@@ -223,6 +243,7 @@ async function handle(request, env) {
     if (payload.action === 'session') result = { user };
     else if (payload.action === 'event.get') result = await event(env, payload.sheetId);
     else if (payload.action === 'event.create') result = await createEvent(env, user, payload);
+    else if (payload.action === 'event.roster.replace') result = await replaceRoster(env, user, payload);
     else if (payload.action === 'event.import') result = await importEvent(env, user, payload);
     else if (payload.action === 'checkin') result = await checkin(env, user, payload);
     else if (payload.action === 'undo') result = await checkin(env, user, payload, true);
