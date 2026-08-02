@@ -55,6 +55,16 @@ async function google(env, url, options = {}) {
   return body;
 }
 
+async function googleAsAdmin(accessToken, url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: { authorization: `Bearer ${accessToken}`, ...(options.headers || {}) },
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error?.message || `Google API error (${response.status})`);
+  return body;
+}
+
 async function values(env, sheetId, range) {
   return google(env, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}`);
 }
@@ -123,13 +133,20 @@ async function createEvent(env, user, payload) {
   admin(user);
   const name = String(payload.name || '').trim();
   const attendees = payload.attendees || [];
+  const driveAccessToken = String(payload.driveAccessToken || '');
+  if (!driveAccessToken) throw new Error('Google Drive authorization is required to create an activity.');
   if (!name) throw new Error('請輸入活動名稱。');
   validateRows(attendees);
-  const created = await google(env, 'https://sheets.googleapis.com/v4/spreadsheets', {
+  const created = await googleAsAdmin(driveAccessToken, 'https://sheets.googleapis.com/v4/spreadsheets', {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ properties: { title: name }, sheets: [{ properties: { title: '名單', gridProperties: { frozenRowCount: 1 } } }] }),
   });
   const data = [['編號', '姓名', '通訊地址', '備註', '報到時間', '報到人員'], ...attendees.map(row => [row.id, row.name, row.address || '', row.notes || '', '', ''])];
+  const service = JSON.parse(env.GOOGLE_SERVICE_ACCOUNT_JSON);
+  await googleAsAdmin(driveAccessToken, `https://www.googleapis.com/drive/v3/files/${created.spreadsheetId}/permissions?sendNotificationEmail=false`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'user', role: 'writer', emailAddress: service.client_email }),
+  });
   await put(env, created.spreadsheetId, `A1:F${data.length}`, data);
   await append(env, env.EVENT_REGISTRY_SHEET_ID, 'A:C', [[created.spreadsheetId, name, new Date().toISOString()]]);
   return event(env, created.spreadsheetId);

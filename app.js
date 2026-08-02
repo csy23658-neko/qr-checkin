@@ -4,6 +4,7 @@
 
 const state = {
   idToken:          null,
+  driveAccessToken: null,
   user:             null,   // { email, name }
   role:             null,   // 'admin' | 'volunteer'
   sheetId:          null,
@@ -44,6 +45,23 @@ function initAuth() {
   google.accounts.id.renderButton(document.getElementById('google-signin-button'), {
     type: 'standard', theme: 'outline', size: 'large', text: 'signin_with',
     shape: 'rectangular', logo_alignment: 'left', width: 304, locale: 'zh_TW',
+  });
+  state.driveTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: CONFIG.GOOGLE_CLIENT_ID,
+    scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets',
+    callback: () => {},
+  });
+}
+
+function ensureDriveAccess() {
+  if (state.driveAccessToken) return Promise.resolve(state.driveAccessToken);
+  return new Promise((resolve, reject) => {
+    state.driveTokenClient.callback = response => {
+      if (response.error || !response.access_token) return reject(new Error('未取得建立活動所需的 Google Drive 授權。'));
+      state.driveAccessToken = response.access_token;
+      resolve(response.access_token);
+    };
+    state.driveTokenClient.requestAccessToken({ prompt: 'consent' });
   });
 }
 
@@ -194,7 +212,8 @@ async function createEvent() {
 }
 
 async function createEventWithAttendees(name, attendees) {
-    const created = await apiAction('event.create', { name, attendees: attendees.map(row => ({ id: row[0], name: row[1], address: row[2], notes: row[3] })) });
+    const driveAccessToken = await ensureDriveAccess();
+    const created = await apiAction('event.create', { name, driveAccessToken, attendees: attendees.map(row => ({ id: row[0], name: row[1], address: row[2], notes: row[3] })) });
     state.sheetId = created.sheetId;
     state.spreadsheetTitle = created.title;
     state.rows = created.rows;
