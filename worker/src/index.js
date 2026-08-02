@@ -7,7 +7,7 @@ const asJson = (body, status = 200, headers = {}) => new Response(JSON.stringify
 
 function allowedCors(request, env) {
   const origin = request.headers.get('Origin') || '';
-  const origins = (env.ALLOWED_ORIGINS || '').split(',').map(value => value.trim());
+  const origins = (env.ALLOWED_ORIGINS || 'https://qr-checkin-3iv.pages.dev').split(',').map(value => value.trim());
   return origins.includes(origin) ? { 'access-control-allow-origin': origin, vary: 'Origin' } : {};
 }
 
