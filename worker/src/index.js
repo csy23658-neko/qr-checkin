@@ -76,7 +76,8 @@ async function userFrom(request, env) {
   if (!credential) throw new Error('請先登入。');
   const response = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`);
   const identity = await response.json();
-  if (!response.ok || identity.aud !== env.GOOGLE_CLIENT_ID || identity.email_verified !== 'true') throw new Error('Google 身分驗證失敗。');
+  const clientId = env.GOOGLE_CLIENT_ID || '234893329401-s9cnhole5d3q885do2b5349btlifk46r.apps.googleusercontent.com';
+  if (!response.ok || identity.aud !== clientId || identity.email_verified !== 'true') throw new Error('Google 身分驗證失敗。');
   const email = String(identity.email || '').toLowerCase();
   const admins = (env.ADMIN_EMAILS || '').split(',').map(value => value.trim().toLowerCase());
   if (admins.includes(email)) return { email, name: identity.name || email, role: 'admin' };
