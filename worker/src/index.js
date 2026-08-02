@@ -101,7 +101,9 @@ function admin(user) { if (user.role !== 'admin') throw new Error('只有管理�
 
 async function assertEvent(env, sheetId) {
   const registry = await values(env, env.EVENT_REGISTRY_SHEET_ID, 'A:A');
-  if (!(registry.values || []).slice(1).some(row => row[0] === sheetId)) throw new Error('此活動尚未由管理者註冊。');
+  // The registry may be newly created without a header row.  Accept a matching
+  // entry anywhere so the first activity is usable as soon as it is registered.
+  if (!(registry.values || []).some(row => row[0] === sheetId)) throw new Error('此活動尚未由管理者註冊。');
 }
 
 function rowsFrom(data) {
