@@ -48,7 +48,10 @@ function initAuth() {
   });
   state.driveTokenClient = google.accounts.oauth2.initTokenClient({
     client_id: CONFIG.GOOGLE_CLIENT_ID,
-    scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets',
+    // `drive.file` limits access to files this app creates or that the user
+    // explicitly opens with it.  It is sufficient for creating an activity
+    // Sheet and avoids asking for access to every spreadsheet in the account.
+    scope: 'https://www.googleapis.com/auth/drive.file',
     callback: () => {},
   });
 }
