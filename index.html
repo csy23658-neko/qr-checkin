@@ -167,22 +167,13 @@
           placeholder="例：2026 中秋敬老餐會">
         <p id="create-error" class="msg-error" style="display:none"></p>
         <p id="create-status" class="msg-success" role="status" style="display:none"></p>
-        <button id="btn-create-event" class="btn btn-primary" onclick="createEvent()">＋ 建立新活動</button>
+        <button id="btn-create-event" type="button" class="btn btn-primary">＋ 建立新活動</button>
         <hr class="divider">
         <p class="label"><b>從範本建立活動</b>｜先下載範本，在電腦以 Excel 填妥文字格式的編號、姓名、通訊地址與備註，再上傳建立活動。</p>
         <button class="btn btn-secondary" onclick="downloadActivityTemplate()">⬇ 下載活動名單範本</button>
         <input id="input-activity-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="text-input file-input">
         <button class="btn btn-primary" onclick="importActivityTemplate()">⬆ 上傳範本並建立活動</button>
         <div id="recent-events"></div>
-        <details class="advanced">
-          <summary>進階：使用現有的 Google 試算表</summary>
-          <p class="label">欄位需依序為：A 編號、B 姓名、C 通訊地址、D 備註、E 報到時間、F 報到人員。</p>
-          <input id="input-sheet-url" type="url"
-            placeholder="https://docs.google.com/spreadsheets/d/…"
-            class="text-input">
-          <p id="setup-error" class="msg-error" style="display:none"></p>
-          <button class="btn btn-secondary" onclick="confirmSetup()">載入此試算表</button>
-        </details>
       </section>
 
       <!-- 參加者 QR 碼 -->

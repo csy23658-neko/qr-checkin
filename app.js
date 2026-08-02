@@ -20,6 +20,8 @@ const state = {
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 window.addEventListener('load', () => {
+  const createButton = document.getElementById('btn-create-event');
+  if (createButton) createButton.addEventListener('click', createEvent);
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
