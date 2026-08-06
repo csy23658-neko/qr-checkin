@@ -474,17 +474,21 @@ function replaceStateRow(updatedRow) {
 // ── Auto-refresh (keeps multi-device data in sync) ────────────────────────────
 
 let autoRefreshTimer = null;
+let autoRefreshBusy = false;
 
 function startAutoRefresh() {
   if (autoRefreshTimer) return;
   autoRefreshTimer = setInterval(async () => {
-    if (!state.sheetId || document.hidden) return;
+    if (!state.sheetId || document.hidden || autoRefreshBusy) return;
+    if (state.currentScreen !== 'screen-list' && state.currentScreen !== 'screen-admin') return;
+    autoRefreshBusy = true;
     try {
       await loadRows();
       if (state.currentScreen === 'screen-list')  renderList();
       if (state.currentScreen === 'screen-admin') renderAdminReport();
     } catch { /* silent — next tick will retry */ }
-  }, 45000);
+    finally { autoRefreshBusy = false; }
+  }, 5000);
 }
 
 // ── Scan Screen ───────────────────────────────────────────────────────────────
