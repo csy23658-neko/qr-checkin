@@ -30,6 +30,7 @@ window.addEventListener('load', () => {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
+  updateActivityPreviewMeta();
   const poll = setInterval(() => {
     if (typeof google !== 'undefined' && google.accounts) {
       clearInterval(poll);
@@ -93,12 +94,10 @@ async function onGoogleCredential(resp) {
   if (sid) {
     state.sheetId = sid;
     await enterApp();
-  } else if (state.role === 'admin') {
-    goTo('screen-admin');
   } else {
-    // Volunteer without a sheet URL
-    document.getElementById('app-nav').style.display = 'none';
-    showLoginError('請向管理員索取活動連結。');
+    // Keep the first post-login screen consistent for both roles.  The scan
+    // screen will explain how to load an activity when no sheet URL exists.
+    goTo('screen-scan');
   }
 }
 
@@ -282,10 +281,47 @@ async function confirmSetup() {
 }
 
 function afterEventSelected() {
-  history.replaceState(null, '', '?sheet=' + state.sheetId);
+  syncActivityUrl();
   saveRecentEvent(state.sheetId, state.spreadsheetTitle || '');
   renderAdmin();
   startAutoRefresh();
+}
+
+function activityShareUrl() {
+  const url = new URL(location.href);
+  const sheetId = state.sheetId || url.searchParams.get('sheet');
+  const title = state.spreadsheetTitle || url.searchParams.get('name');
+  url.search = '';
+  if (sheetId) url.searchParams.set('sheet', sheetId);
+  if (title) url.searchParams.set('name', title);
+  return url.toString();
+}
+
+function syncActivityUrl() {
+  const url = new URL(location.href);
+  url.search = '';
+  if (state.sheetId) url.searchParams.set('sheet', state.sheetId);
+  if (state.spreadsheetTitle) url.searchParams.set('name', state.spreadsheetTitle);
+  history.replaceState(null, '', url.pathname + url.search + url.hash);
+  updateActivityPreviewMeta();
+}
+
+function updateActivityPreviewMeta() {
+  const queryTitle = new URLSearchParams(location.search).get('name');
+  const activityTitle = (state.spreadsheetTitle || queryTitle || '').trim();
+  const title = activityTitle ? `QR 報到系統（${activityTitle}）` : 'QR 報到系統';
+  const description = activityTitle
+    ? `${title}，請使用 Google 帳號登入。`
+    : 'QR 報到系統，請使用 Google 帳號登入。';
+  document.title = title;
+  const setMeta = (selector, content) => {
+    const el = document.querySelector(selector);
+    if (el) el.setAttribute('content', content);
+  };
+  setMeta('meta[name="description"]', description);
+  setMeta('meta[property="og:title"]', title);
+  setMeta('meta[property="og:description"]', description);
+  setMeta('meta[property="og:url"]', activityShareUrl());
 }
 
 // ── Recent events (localStorage) ──────────────────────────────────────────────
@@ -358,7 +394,7 @@ async function shareWithVolunteers(silent = false) {
 }
 
 function copyUrl() {
-  navigator.clipboard.writeText(location.href).then(() => {
+  navigator.clipboard.writeText(activityShareUrl()).then(() => {
     const b = document.getElementById('btn-copy');
     b.textContent = '✓ 已複製';
     setTimeout(() => { b.textContent = '複製網址'; }, 2000);
@@ -372,6 +408,7 @@ async function enterApp() {
   try {
     await loadRows();
     state.spreadsheetTitle = await fetchSpreadsheetTitle(state.sheetId);
+    syncActivityUrl();
     if (state.role === 'admin') saveRecentEvent(state.sheetId, state.spreadsheetTitle || '');
     startAutoRefresh();
     goTo('screen-scan');
@@ -416,14 +453,22 @@ async function checkin(row, manual = false) {
   if (result.already) {
     const error = new Error('already');
     error.code = 'already';
-    error.row = result.row;
+    error.row = replaceStateRow(result.row);
     throw error;
   }
-  return result.row;
+  return replaceStateRow(result.row);
 }
 
 async function undoCheckin(row) {
-  return (await apiAction('undo', { sheetId: state.sheetId, id: row.id })).row;
+  return replaceStateRow((await apiAction('undo', { sheetId: state.sheetId, id: row.id })).row);
+}
+
+function replaceStateRow(updatedRow) {
+  if (!updatedRow?.id) return updatedRow;
+  const index = state.rows.findIndex(row => row.id === updatedRow.id);
+  if (index >= 0) state.rows[index] = updatedRow;
+  else state.rows.push(updatedRow);
+  return updatedRow;
 }
 
 // ── Auto-refresh (keeps multi-device data in sync) ────────────────────────────
@@ -450,6 +495,14 @@ async function startScanner() {
 
   const container = document.getElementById('qr-reader');
   container.innerHTML = '';
+  if (!state.sheetId) {
+    const message = state.role === 'admin'
+      ? '尚未選擇活動，請到「行政」頁建立或選擇活動。'
+      : '尚未載入活動，請使用管理者提供的活動連結。';
+    container.innerHTML = `<p class="msg-error" style="padding:20px">${message}</p>`;
+    state.scanner = null;
+    return;
+  }
   state.scanner = new Html5Qrcode('qr-reader');
 
   try {
@@ -747,8 +800,9 @@ function renderAdminReport() {
     `總數 ${total}　已報到 ${checked}　未報到 ${total - checked}`;
   document.getElementById('event-open-link').href =
     `https://docs.google.com/spreadsheets/d/${state.sheetId}/edit`;
-  document.getElementById('share-url').textContent = location.href;
-  renderShareQr();
+  const shareUrl = activityShareUrl();
+  document.getElementById('share-url').textContent = shareUrl;
+  renderShareQr(shareUrl);
 
   statsEl.innerHTML = `
     <div class="stat-card blue">
@@ -766,13 +820,13 @@ function renderAdminReport() {
   `;
 }
 
-function renderShareQr() {
+function renderShareQr(shareUrl = activityShareUrl()) {
   const el = document.getElementById('share-qr');
   if (!el) return;
   el.innerHTML = '';
   try {
     const qr = qrcode(0, 'M');
-    qr.addData(location.href);
+    qr.addData(shareUrl);
     qr.make();
     el.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2 });
   } catch {}
@@ -1044,7 +1098,10 @@ function goTo(screenId) {
   document.getElementById(screenId).classList.add('active');
 
   document.querySelectorAll('.nav-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.screen === screenId);
+    const active = b.dataset.screen === screenId;
+    b.classList.toggle('active', active);
+    if (active) b.setAttribute('aria-current', 'page');
+    else b.removeAttribute('aria-current');
   });
 
   state.currentScreen = screenId;
@@ -1068,16 +1125,21 @@ function goBack() {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function nowString() {
-  const d   = new Date();
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}/${pad(d.getMonth()+1)}/${pad(d.getDate())} ` +
-         `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}/${values.month}/${values.day} ` +
+    `${values.hour}:${values.minute}:${values.second}`;
 }
 
 function dateString() {
-  const d   = new Date();
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}`;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}${values.month}${values.day}`;
 }
 
 function esc(str) {

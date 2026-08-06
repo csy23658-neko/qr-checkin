@@ -2,7 +2,7 @@
    Lets the app shell load with poor/no connectivity (data still needs network). */
 'use strict';
 
-const CACHE = 'qr-checkin-v3';
+const CACHE = 'qr-checkin-v4';
 const ASSETS = [
   './',
   './index.html',

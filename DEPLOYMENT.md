@@ -36,6 +36,8 @@ Copy the resulting Worker HTTPS URL into `CONFIG.API_BASE_URL` in `config.js`; t
 3. Configure Cloudflare Access for the staging URL. Initially allow only the developer email; after internal acceptance, add named nonprofit administrators and volunteers.
 4. Add the final Pages staging URL to the Google OAuth client and use the same URL in `ALLOWED_ORIGINS`.
 
+The activity-name link preview uses the Pages Function in `functions/index.js`, so deploy the project through a Git-connected Pages project or Wrangler. Cloudflare Pages direct-upload deployments do not include Functions.
+
 ## 4. Handover
 
 After acceptance, give nonprofit administrators access to the repository, Cloudflare project, Google Cloud project, service account, and Sheets. Create a separate production Worker and Pages deployment with production-only secrets and origins. The nonprofit can then move the custom domain independently.

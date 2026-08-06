@@ -80,10 +80,15 @@ html, body { height: 100%; overflow: hidden; font-family: 'Segoe UI', 'PingFang 
   align-items: center; justify-content: center;
   background: none; border: none; cursor: pointer;
   color: var(--text-muted); font-size: 11px; gap: 2px;
-  padding: 6px 0;
+  padding: 6px 0; position: relative; transition: color .15s, background .15s;
 }
 .nav-btn .nav-icon { font-size: 22px; line-height: 1; }
-.nav-btn.active { color: var(--primary); }
+.nav-btn.active { color: var(--primary); background: var(--bg); font-weight: 700; }
+.nav-btn.active::before {
+  content: ''; position: absolute; top: 0; left: 20%; right: 20%; height: 3px;
+  background: var(--primary); border-radius: 0 0 3px 3px;
+}
+.nav-btn.active .nav-icon { transform: translateY(-1px); }
 .nav-btn:active { background: var(--bg); }
 
 /* ── Scroll content (generic padded area) ──────────────────────────────────── */

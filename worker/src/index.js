@@ -4,6 +4,11 @@ const encode = value => new TextEncoder().encode(value);
 const asJson = (body, status = 200, headers = {}) => new Response(JSON.stringify(body), {
   status, headers: { 'content-type': 'application/json; charset=utf-8', ...headers },
 });
+const TAIPEI_TIME_ZONE = 'Asia/Taipei';
+const taipeiTimestamp = () => new Date().toLocaleString('zh-TW', {
+  hour12: false,
+  timeZone: TAIPEI_TIME_ZONE,
+});
 
 function allowedCors(request, env) {
   const origin = request.headers.get('Origin') || '';
@@ -217,7 +222,7 @@ async function checkin(env, user, payload, undo = false) {
   const row = current.rows.find(item => item.id === String(payload.id || '').trim());
   if (!row) throw new Error('找不到此編號。');
   if (!undo && row.checkinStamp) return { row, already: true };
-  const stamp = undo ? '' : new Date().toLocaleString('zh-TW', { hour12: false });
+  const stamp = undo ? '' : taipeiTimestamp();
   const by = undo ? '' : `${user.name}${payload.manual ? '（手動）' : ''}`;
   await put(env, payload.sheetId, `E${row.rowIndex}:F${row.rowIndex}`, [[stamp, by]]);
   return { row: { ...row, checkinStamp: stamp, checkinBy: by }, already: false };
@@ -227,7 +232,7 @@ async function addWalkin(env, user, payload) {
   await assertEvent(env, payload.sheetId);
   const name = String(payload.name || '').trim();
   if (!name) throw new Error('請輸入姓名。');
-  const row = [`W-${crypto.randomUUID()}`, name, String(payload.address || ''), String(payload.notes || '現場報名'), new Date().toLocaleString('zh-TW', { hour12: false }), `${user.name}（手動）`];
+  const row = [`W-${crypto.randomUUID()}`, name, String(payload.address || ''), String(payload.notes || '現場報名'), taipeiTimestamp(), `${user.name}（手動）`];
   await append(env, payload.sheetId, 'A:F', [row]);
   return event(env, payload.sheetId);
 }
