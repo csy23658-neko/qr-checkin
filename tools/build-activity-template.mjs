@@ -1,20 +1,22 @@
-import fs from 'node:fs/promises';
-import { FileBlob, SpreadsheetFile, Workbook } from '@oai/artifact-tool';
+import { SpreadsheetFile, Workbook } from '@oai/artifact-tool';
+
+const PARTICIPANT_ROWS = 1000;
+const LAST_PARTICIPANT_ROW = PARTICIPANT_ROWS + 1;
 
 const workbook = Workbook.create();
 const list = workbook.worksheets.add('名單');
 list.showGridLines = false;
 list.getRange('A1:D1').values = [['編號', '姓名', '通訊地址', '備註']];
-list.getRange('A2:D51').values = Array.from({ length: 50 }, () => ['', '', '', '']);
+list.getRange(`A2:D${LAST_PARTICIPANT_ROW}`).values = Array.from({ length: PARTICIPANT_ROWS }, () => ['', '', '', '']);
 list.getRange('A1:D1').format = {
   fill: '#3860B2',
   font: { bold: true, color: '#FFFFFF' },
   horizontalAlignment: 'center',
   verticalAlignment: 'center',
 };
-list.getRange('A1:D51').format.borders = { preset: 'all', style: 'thin', color: '#D9E1F2' };
-list.getRange('A2:D51').format.numberFormat = '@';
-list.getRange('A2:D51').format.verticalAlignment = 'center';
+list.getRange(`A1:D${LAST_PARTICIPANT_ROW}`).format.borders = { preset: 'all', style: 'thin', color: '#D9E1F2' };
+list.getRange(`A2:D${LAST_PARTICIPANT_ROW}`).format.numberFormat = '@';
+list.getRange(`A2:D${LAST_PARTICIPANT_ROW}`).format.verticalAlignment = 'center';
 list.getRange('A:A').format.columnWidth = 18;
 list.getRange('B:B').format.columnWidth = 16;
 list.getRange('C:C').format.columnWidth = 34;
@@ -53,16 +55,3 @@ guide.getRange('3:7').format.rowHeight = 38;
 
 const output = await SpreadsheetFile.exportXlsx(workbook);
 await output.save('活動名單範本.xlsx');
-
-const savedWorkbook = await SpreadsheetFile.importXlsx(await FileBlob.load('活動名單範本.xlsx'));
-const savedStyle = await savedWorkbook.inspect({ kind: 'computedStyle', range: '名單!A2:D2', maxChars: 2000 });
-console.log(savedStyle.ndjson);
-
-const preview = await workbook.render({ sheetName: '名單', range: 'A1:D16', scale: 1.5, format: 'png' });
-await fs.writeFile('tools/活動名單範本預覽.png', new Uint8Array(await preview.arrayBuffer()));
-const guidePreview = await workbook.render({ sheetName: '填寫說明', range: 'A1:D7', scale: 1.5, format: 'png' });
-await fs.writeFile('tools/活動名單範本說明預覽.png', new Uint8Array(await guidePreview.arrayBuffer()));
-const check = await workbook.inspect({
-  kind: 'table', range: '名單!A1:D6', include: 'values,formulas', tableMaxRows: 6, tableMaxCols: 4,
-});
-console.log(check.ndjson);
