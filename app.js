@@ -9,7 +9,6 @@ const state = {
   role:             null,   // 'admin' | 'volunteer'
   sheetId:          null,
   spreadsheetTitle: null,
-  rosterReady:      false,  // true after an existing roster is loaded or uploaded
   allowListSheetId: null,
   rows:             [],     // [{ rowIndex, id, name, address, notes, checkinStamp, checkinBy }]
   selectedRow:      null,
@@ -109,11 +108,7 @@ async function apiAction(action, payload = {}) {
     body: JSON.stringify({ action, ...payload }),
   });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(result.error || `API error (${response.status})`);
-    error.status = response.status;
-    throw error;
-  }
+  if (!response.ok) throw new Error(result.error || `API error (${response.status})`);
   return result;
 }
 
@@ -194,19 +189,15 @@ async function importActivityTemplate() {
     if (!attendees.length) throw new Error('名單沒有任何參與者資料。');
 
     if (state.sheetId) {
-      const currentActivityTitle = state.spreadsheetTitle || '目前活動';
-      setImportStatus(`正在將 ${attendees.length} 位參與者匯入「${currentActivityTitle}」…`);
+      setImportStatus(`正在將 ${attendees.length} 位參與者匯入「${state.spreadsheetTitle || '目前活動'}」…`);
       const updated = await apiAction('event.roster.replace', {
         sheetId: state.sheetId,
         attendees: attendees.map(row => ({ id: row[0], name: row[1], address: row[2], notes: row[3] })),
       });
-      // The uploaded filename describes the source file, not the activity.
-      // Keep the selected activity name stable while replacing its roster.
-      state.spreadsheetTitle = state.spreadsheetTitle || updated.title;
+      state.spreadsheetTitle = updated.title;
       state.rows = updated.rows;
-      state.rosterReady = true;
       afterEventSelected();
-      setImportStatus(`已成功匯入 ${attendees.length} 位參與者至「${state.spreadsheetTitle || currentActivityTitle}」。`);
+      setImportStatus(`已成功匯入 ${attendees.length} 位參與者至「${updated.title}」。`);
     } else {
       setImportStatus(`正在建立「${name}」並匯入 ${attendees.length} 位參與者…`);
       const created = await createEventWithAttendees(name, attendees);
@@ -230,11 +221,6 @@ async function createEvent() {
   setCreateStatus('');
   const name = document.getElementById('input-event-name').value.trim();
   if (!name) { showError('create-error', '請輸入活動名稱。'); return; }
-
-  // Clear the previously selected activity before the new activity request
-  // starts, so its roster cannot remain visible while the new activity is
-  // being created.
-  clearCurrentEvent();
 
   const button = document.getElementById('btn-create-event');
   button.disabled = true;
@@ -261,15 +247,8 @@ async function createEventWithAttendees(name, attendees) {
     state.sheetId = created.sheetId;
     state.spreadsheetTitle = created.title;
     state.rows = created.rows;
-    state.rosterReady = attendees.length > 0;
     document.getElementById('input-event-name').value = '';
-    if (state.rosterReady) {
-      afterEventSelected();
-    } else {
-      syncActivityUrl();
-      saveRecentEvent(state.sheetId, state.spreadsheetTitle || '');
-      renderAdmin();
-    }
+    afterEventSelected();
     await shareWithVolunteers(true);
     return created;
 }
@@ -287,14 +266,11 @@ async function confirmSetup() {
     state.sheetId = imported.sheetId;
     state.spreadsheetTitle = imported.title;
     state.rows = imported.rows;
-    state.rosterReady = true;
     document.getElementById('input-sheet-url').value = '';
     afterEventSelected();
   } catch (e) {
     state.sheetId          = null;
     state.spreadsheetTitle = null;
-    state.rows             = [];
-    state.rosterReady      = false;
     const msg = (e.status === 403 || e.status === 404)
       ? '無法存取試算表，請確認共用設定。'
       : '載入失敗：' + (e.message || e);
@@ -309,16 +285,6 @@ function afterEventSelected() {
   saveRecentEvent(state.sheetId, state.spreadsheetTitle || '');
   renderAdmin();
   startAutoRefresh();
-}
-
-function clearCurrentEvent() {
-  state.sheetId = null;
-  state.spreadsheetTitle = null;
-  state.rows = [];
-  state.rosterReady = false;
-  state.selectedRow = null;
-  syncActivityUrl();
-  renderAdmin();
 }
 
 function activityShareUrl() {
@@ -360,33 +326,15 @@ function updateActivityPreviewMeta() {
 
 // ── Recent events (localStorage) ──────────────────────────────────────────────
 
-const RECENT_EVENT_LIMIT = 2;
-
 function getRecentEvents() {
-  try {
-    const list = JSON.parse(localStorage.getItem('qr-recent-events')) || [];
-    return Array.isArray(list) ? list.filter(event => event && event.id).slice(0, RECENT_EVENT_LIMIT) : [];
-  }
+  try { return JSON.parse(localStorage.getItem('qr-recent-events')) || []; }
   catch { return []; }
 }
 
 function saveRecentEvent(id, title) {
   const list = getRecentEvents().filter(e => e.id !== id);
   list.unshift({ id, title, ts: Date.now() });
-  try { localStorage.setItem('qr-recent-events', JSON.stringify(list.slice(0, RECENT_EVENT_LIMIT))); } catch {}
-}
-
-function removeRecentEvent(id) {
-  const list = getRecentEvents().filter(e => e.id !== id);
-  try { localStorage.setItem('qr-recent-events', JSON.stringify(list)); } catch {}
-}
-
-function isMissingActivityError(error) {
-  const message = String(error?.message || error || '').toLowerCase();
-  return error?.status === 404 ||
-    message.includes('requested entity was not found') ||
-    message.includes('此活動尚未由管理者註冊') ||
-    message.includes('not found');
+  try { localStorage.setItem('qr-recent-events', JSON.stringify(list.slice(0, 8))); } catch {}
 }
 
 function renderRecentEvents() {
@@ -403,45 +351,16 @@ function renderRecentEvents() {
 }
 
 async function switchEvent(id) {
-  const previous = {
-    sheetId: state.sheetId,
-    spreadsheetTitle: state.spreadsheetTitle,
-    rows: state.rows,
-    rosterReady: state.rosterReady,
-  };
-  const cachedEvent = getRecentEvents().find(event => event.id === id);
   setLoading(true);
   try {
     state.sheetId = id;
-    state.spreadsheetTitle = null;
-    state.rows = [];
-    state.rosterReady = false;
-    try {
-      await loadRows();
-    } catch (error) {
-      if (!isMissingActivityError(error)) throw error;
-
-      // Older activities may be valid Sheets that predate the event registry.
-      // Let the admin-only import flow validate the roster and register them
-      // before treating a recent activity as deleted.
-      const recovered = await apiAction('event.import', { sheetId: id });
-      state.sheetId = recovered.sheetId;
-      state.spreadsheetTitle = recovered.title;
-      state.rows = recovered.rows;
-    }
-    state.rosterReady = true;
+    await loadRows();
+    state.spreadsheetTitle = await fetchSpreadsheetTitle(id);
     afterEventSelected();
   } catch (e) {
-    state.sheetId = previous.sheetId;
-    state.spreadsheetTitle = previous.spreadsheetTitle;
-    state.rows = previous.rows;
-    state.rosterReady = previous.rosterReady;
-    if (isMissingActivityError(e)) {
-      removeRecentEvent(id);
-      alert(`無法載入「${cachedEvent?.title || '此活動'}」。活動可能已刪除、尚未註冊或目前帳號無法存取；已從最近活動移除。`);
-    } else {
-      alert('無法載入此活動：' + (e.message || e));
-    }
+    state.sheetId = null;
+    state.rows    = [];
+    alert('無法載入此活動：' + (e.message || e));
     renderAdmin();
   } finally {
     setLoading(false);
@@ -489,7 +408,6 @@ async function enterApp() {
   try {
     await loadRows();
     state.spreadsheetTitle = await fetchSpreadsheetTitle(state.sheetId);
-    state.rosterReady = true;
     syncActivityUrl();
     if (state.role === 'admin') saveRecentEvent(state.sheetId, state.spreadsheetTitle || '');
     startAutoRefresh();
@@ -519,13 +437,6 @@ async function loadRows() {
 }
 
 async function refreshData() {
-  if (!state.sheetId) {
-    // No activity is a valid empty state, not a network failure.
-    if (state.currentScreen === 'screen-list')  renderList();
-    if (state.currentScreen === 'screen-admin') renderAdmin();
-    return;
-  }
-
   setLoading(true);
   try {
     await loadRows();
@@ -862,18 +773,15 @@ function renderAdmin() {
   const title = document.getElementById('dashboard-title');
   const subtitle = document.getElementById('dashboard-subtitle');
   if (title) title.textContent = state.spreadsheetTitle || '建立並管理您的活動';
-  if (subtitle) subtitle.textContent = state.sheetId && !state.rosterReady
-    ? '活動已建立，請先上傳名單；上傳完成後才會顯示活動資料。'
-    : state.sheetId
-      ? '活動名單、列印、志工授權與出席報告皆集中在這裡。'
-      : '先建立新活動或匯入填好的名單範本，即可開始管理。';
+  if (subtitle) subtitle.textContent = state.sheetId
+    ? '活動名單、列印、志工授權與出席報告皆集中在這裡。'
+    : '先建立新活動或匯入填好的名單範本，即可開始管理。';
 }
 
 // ── Report (within Admin) ─────────────────────────────────────────────────────
 
 function renderAdminReport() {
-  const hasEvent = !!state.sheetId && state.rosterReady;
-  const hasPendingEvent = !!state.sheetId && !state.rosterReady;
+  const hasEvent = !!state.sheetId;
 
   document.getElementById('event-none').style.display = hasEvent ? 'none' : '';
   document.getElementById('event-info').style.display = hasEvent ? '' : 'none';
@@ -883,12 +791,7 @@ function renderAdminReport() {
   const statsEl = document.getElementById('report-stats');
 
   if (!hasEvent) {
-    const emptyMessage = hasPendingEvent
-      ? `已建立「${esc(state.spreadsheetTitle || '新活動')}」，尚未上傳活動名單。<br>完成名單上傳後，這裡會顯示新活動資料。`
-      : '尚未選擇活動。<br>請在下方「建立或切換活動」開始。';
-    document.getElementById('event-none').innerHTML =
-      `<p class="msg-empty" style="padding:8px 0">${emptyMessage}</p>`;
-    statsEl.innerHTML = '<p class="msg-empty" style="padding:8px 0">尚未載入活動名單</p>';
+    statsEl.innerHTML = '<p class="msg-empty" style="padding:8px 0">尚未選擇活動</p>';
     return;
   }
 
@@ -1090,7 +993,6 @@ async function addWalkIn() {
   try {
     const result = await apiAction('walkin.add', { sheetId: state.sheetId, name, address, notes });
     state.rows = result.rows;
-    state.rosterReady = true;
 
     // Reset form (keep notes default)
     document.getElementById('walkin-name').value    = '';

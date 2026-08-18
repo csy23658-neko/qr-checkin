@@ -56,11 +56,7 @@ async function google(env, url, options = {}) {
     headers: { authorization: `Bearer ${await serviceToken(env)}`, ...(options.headers || {}) },
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(body.error?.message || `Google API error (${response.status})`);
-    error.status = response.status;
-    throw error;
-  }
+  if (!response.ok) throw new Error(body.error?.message || `Google API error (${response.status})`);
   return body;
 }
 
@@ -70,33 +66,8 @@ async function googleAsAdmin(accessToken, url, options = {}) {
     headers: { authorization: `Bearer ${accessToken}`, ...(options.headers || {}) },
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(body.error?.message || `Google API error (${response.status})`);
-    error.status = response.status;
-    throw error;
-  }
+  if (!response.ok) throw new Error(body.error?.message || `Google API error (${response.status})`);
   return body;
-}
-
-async function retryGoogle(operation, attempts = 5) {
-  let lastError;
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    try {
-      return await operation();
-    } catch (error) {
-      lastError = error;
-      const retryable = [403, 404, 429, 500, 502, 503, 504].includes(error?.status);
-      if (!retryable || attempt === attempts - 1) throw error;
-      await new Promise(resolve => setTimeout(resolve, 250 * (2 ** attempt)));
-    }
-  }
-  throw lastError;
-}
-
-function googleStageError(label, error) {
-  const wrapped = new Error(`${label}：${error?.message || error}`);
-  wrapped.status = error?.status;
-  return wrapped;
 }
 
 async function values(env, sheetId, range) {
@@ -105,12 +76,6 @@ async function values(env, sheetId, range) {
 
 async function put(env, sheetId, range, data) {
   return google(env, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
-    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ range, majorDimension: 'ROWS', values: data }),
-  });
-}
-
-async function putAsAdmin(accessToken, sheetId, range, data) {
-  return googleAsAdmin(accessToken, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ range, majorDimension: 'ROWS', values: data }),
   });
 }
@@ -146,16 +111,10 @@ async function userFrom(request, env) {
 function admin(user) { if (user.role !== 'admin') throw new Error('只有管理者可以執行此操作。'); }
 
 async function assertEvent(env, sheetId) {
-  const registry = await values(env, env.EVENT_REGISTRY_SHEET_ID, 'A:B');
+  const registry = await values(env, env.EVENT_REGISTRY_SHEET_ID, 'A:A');
   // The registry may be newly created without a header row.  Accept a matching
   // entry anywhere so the first activity is usable as soon as it is registered.
-  const entry = (registry.values || []).find(row => row[0] === sheetId);
-  if (!entry) {
-    const error = new Error('此活動尚未由管理者註冊。');
-    error.status = 404;
-    throw error;
-  }
-  return String(entry[1] || '').trim();
+  if (!(registry.values || []).some(row => row[0] === sheetId)) throw new Error('此活動尚未由管理者註冊。');
 }
 
 function rowsFrom(data) {
@@ -175,16 +134,12 @@ function validateRows(rows) {
 }
 
 async function event(env, sheetId) {
-  const registeredTitle = await assertEvent(env, sheetId);
+  await assertEvent(env, sheetId);
   const [data, meta] = await Promise.all([
     values(env, sheetId, 'A:F'),
     google(env, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=properties.title`),
   ]);
-  return {
-    sheetId,
-    title: registeredTitle || meta.properties?.title || '',
-    rows: rowsFrom(data.values),
-  };
+  return { sheetId, title: meta.properties?.title || '', rows: rowsFrom(data.values) };
 }
 
 async function createEvent(env, user, payload) {
@@ -195,42 +150,19 @@ async function createEvent(env, user, payload) {
   if (!driveAccessToken) throw new Error('Google Drive authorization is required to create an activity.');
   if (!name) throw new Error('請輸入活動名稱。');
   validateRows(attendees);
-  let created;
-  try {
-    created = await googleAsAdmin(driveAccessToken, 'https://sheets.googleapis.com/v4/spreadsheets', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ properties: { title: name }, sheets: [{ properties: { title: '名單', gridProperties: { frozenRowCount: 1 } } }] }),
-    });
-  } catch (error) {
-    throw googleStageError('建立 Google 試算表失敗', error);
-  }
-
+  const created = await googleAsAdmin(driveAccessToken, 'https://sheets.googleapis.com/v4/spreadsheets', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ properties: { title: name }, sheets: [{ properties: { title: '名單', gridProperties: { frozenRowCount: 1 } } }] }),
+  });
   const data = [['編號', '姓名', '通訊地址', '備註', '報到時間', '報到人員'], ...attendees.map(row => [row.id, row.name, row.address || '', row.notes || '', '', ''])];
-  try {
-    // The creator's OAuth token can write immediately.  Do this before sharing
-    // with the service account, whose permission may take a few seconds to
-    // propagate through Drive.
-    await putAsAdmin(driveAccessToken, created.spreadsheetId, `A1:F${data.length}`, data);
-  } catch (error) {
-    throw googleStageError('初始化活動名單失敗', error);
-  }
-
-  try {
-    const service = JSON.parse(env.GOOGLE_SERVICE_ACCOUNT_JSON);
-    await retryGoogle(() => googleAsAdmin(driveAccessToken, `https://www.googleapis.com/drive/v3/files/${created.spreadsheetId}/permissions?sendNotificationEmail=false`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ type: 'user', role: 'writer', emailAddress: service.client_email }),
-    }));
-  } catch (error) {
-    throw googleStageError('共用活動給系統服務帳號失敗', error);
-  }
-
-  try {
-    await retryGoogle(() => append(env, env.EVENT_REGISTRY_SHEET_ID, 'A:C', [[created.spreadsheetId, name, new Date().toISOString()]]));
-    return await retryGoogle(() => event(env, created.spreadsheetId));
-  } catch (error) {
-    throw googleStageError('完成活動註冊失敗', error);
-  }
+  const service = JSON.parse(env.GOOGLE_SERVICE_ACCOUNT_JSON);
+  await googleAsAdmin(driveAccessToken, `https://www.googleapis.com/drive/v3/files/${created.spreadsheetId}/permissions?sendNotificationEmail=false`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'user', role: 'writer', emailAddress: service.client_email }),
+  });
+  await put(env, created.spreadsheetId, `A1:F${data.length}`, data);
+  await append(env, env.EVENT_REGISTRY_SHEET_ID, 'A:C', [[created.spreadsheetId, name, new Date().toISOString()]]);
+  return event(env, created.spreadsheetId);
 }
 
 async function replaceRoster(env, user, payload) {
@@ -326,7 +258,7 @@ async function handle(request, env) {
     else throw new Error('不支援的操作。');
     return asJson(result, 200, cors);
   } catch (error) {
-    return asJson({ error: error.message || 'Request failed.' }, error.status || 400, cors);
+    return asJson({ error: error.message || 'Request failed.' }, 400, cors);
   }
 }
 
