@@ -9,6 +9,7 @@ const state = {
   role:             null,   // 'admin' | 'volunteer'
   sheetId:          null,
   spreadsheetTitle: null,
+  rosterReady:      false,
   allowListSheetId: null,
   rows:             [],     // [{ rowIndex, id, name, address, notes, checkinStamp, checkinBy }]
   selectedRow:      null,
@@ -108,7 +109,11 @@ async function apiAction(action, payload = {}) {
     body: JSON.stringify({ action, ...payload }),
   });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error || `API error (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(result.error || `API error (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return result;
 }
 
@@ -189,15 +194,17 @@ async function importActivityTemplate() {
     if (!attendees.length) throw new Error('名單沒有任何參與者資料。');
 
     if (state.sheetId) {
-      setImportStatus(`正在將 ${attendees.length} 位參與者匯入「${state.spreadsheetTitle || '目前活動'}」…`);
+      const currentActivityTitle = state.spreadsheetTitle || '目前活動';
+      setImportStatus(`正在將 ${attendees.length} 位參與者匯入「${currentActivityTitle}」…`);
       const updated = await apiAction('event.roster.replace', {
         sheetId: state.sheetId,
         attendees: attendees.map(row => ({ id: row[0], name: row[1], address: row[2], notes: row[3] })),
       });
-      state.spreadsheetTitle = updated.title;
+      state.spreadsheetTitle = state.spreadsheetTitle || updated.title;
       state.rows = updated.rows;
+      state.rosterReady = true;
       afterEventSelected();
-      setImportStatus(`已成功匯入 ${attendees.length} 位參與者至「${updated.title}」。`);
+      setImportStatus(`已成功匯入 ${attendees.length} 位參與者至「${state.spreadsheetTitle || currentActivityTitle}」。`);
     } else {
       setImportStatus(`正在建立「${name}」並匯入 ${attendees.length} 位參與者…`);
       const created = await createEventWithAttendees(name, attendees);
@@ -221,6 +228,8 @@ async function createEvent() {
   setCreateStatus('');
   const name = document.getElementById('input-event-name').value.trim();
   if (!name) { showError('create-error', '請輸入活動名稱。'); return; }
+
+  clearCurrentEvent();
 
   const button = document.getElementById('btn-create-event');
   button.disabled = true;
@@ -247,37 +256,17 @@ async function createEventWithAttendees(name, attendees) {
     state.sheetId = created.sheetId;
     state.spreadsheetTitle = created.title;
     state.rows = created.rows;
+    state.rosterReady = attendees.length > 0;
     document.getElementById('input-event-name').value = '';
-    afterEventSelected();
+    if (state.rosterReady) {
+      afterEventSelected();
+    } else {
+      syncActivityUrl();
+      saveRecentEvent(state.sheetId, state.spreadsheetTitle || '');
+      renderAdmin();
+    }
     await shareWithVolunteers(true);
     return created;
-}
-
-// Advanced: load an existing spreadsheet by URL
-async function confirmSetup() {
-  hideError('setup-error');
-  const url = document.getElementById('input-sheet-url').value.trim();
-  const m   = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-  if (!m) { showError('setup-error', '網址格式不正確，請重新貼上 Google 試算表網址。'); return; }
-
-  setLoading(true);
-  try {
-    const imported = await apiAction('event.import', { sheetId: m[1] });
-    state.sheetId = imported.sheetId;
-    state.spreadsheetTitle = imported.title;
-    state.rows = imported.rows;
-    document.getElementById('input-sheet-url').value = '';
-    afterEventSelected();
-  } catch (e) {
-    state.sheetId          = null;
-    state.spreadsheetTitle = null;
-    const msg = (e.status === 403 || e.status === 404)
-      ? '無法存取試算表，請確認共用設定。'
-      : '載入失敗：' + (e.message || e);
-    showError('setup-error', msg);
-  } finally {
-    setLoading(false);
-  }
 }
 
 function afterEventSelected() {
@@ -285,6 +274,16 @@ function afterEventSelected() {
   saveRecentEvent(state.sheetId, state.spreadsheetTitle || '');
   renderAdmin();
   startAutoRefresh();
+}
+
+function clearCurrentEvent() {
+  state.sheetId = null;
+  state.spreadsheetTitle = null;
+  state.rows = [];
+  state.rosterReady = false;
+  state.selectedRow = null;
+  syncActivityUrl();
+  renderAdmin();
 }
 
 function activityShareUrl() {
@@ -326,21 +325,38 @@ function updateActivityPreviewMeta() {
 
 // ── Recent events (localStorage) ──────────────────────────────────────────────
 
+const RECENT_EVENT_LIMIT = 2;
+
 function getRecentEvents() {
-  try { return JSON.parse(localStorage.getItem('qr-recent-events')) || []; }
+  try {
+    const list = JSON.parse(localStorage.getItem('qr-recent-events')) || [];
+    return Array.isArray(list)
+      ? list.filter(event => event && event.id)
+      : [];
+  }
   catch { return []; }
 }
 
 function saveRecentEvent(id, title) {
   const list = getRecentEvents().filter(e => e.id !== id);
   list.unshift({ id, title, ts: Date.now() });
-  try { localStorage.setItem('qr-recent-events', JSON.stringify(list.slice(0, 8))); } catch {}
+  try { localStorage.setItem('qr-recent-events', JSON.stringify(list.slice(0, RECENT_EVENT_LIMIT))); } catch {}
+}
+
+function removeRecentEvent(id) {
+  const list = getRecentEvents().filter(event => event.id !== id);
+  try { localStorage.setItem('qr-recent-events', JSON.stringify(list.slice(0, RECENT_EVENT_LIMIT))); } catch {}
+}
+
+function isMissingActivityError(error) {
+  const message = String(error?.message || error || '');
+  return error?.status === 404 || message.includes('此活動尚未由管理者註冊');
 }
 
 function renderRecentEvents() {
   const el = document.getElementById('recent-events');
   if (!el) return;
-  const list = getRecentEvents().filter(e => e.id !== state.sheetId);
+  const list = getRecentEvents().filter(e => e.id !== state.sheetId).slice(0, RECENT_EVENT_LIMIT);
   if (!list.length) { el.innerHTML = ''; return; }
   el.innerHTML = '<p class="label" style="margin-top:6px">或選擇最近的活動：</p>' +
     list.map(e => `
@@ -351,16 +367,36 @@ function renderRecentEvents() {
 }
 
 async function switchEvent(id) {
+  const previous = {
+    sheetId: state.sheetId,
+    spreadsheetTitle: state.spreadsheetTitle,
+    rows: state.rows,
+    rosterReady: state.rosterReady,
+    selectedRow: state.selectedRow,
+  };
+  const cachedEvent = getRecentEvents().find(event => event.id === id);
   setLoading(true);
   try {
     state.sheetId = id;
+    state.spreadsheetTitle = null;
+    state.rows = [];
+    state.rosterReady = false;
+    state.selectedRow = null;
     await loadRows();
-    state.spreadsheetTitle = await fetchSpreadsheetTitle(id);
+    state.rosterReady = state.rows.length > 0;
     afterEventSelected();
   } catch (e) {
-    state.sheetId = null;
-    state.rows    = [];
-    alert('無法載入此活動：' + (e.message || e));
+    state.sheetId = previous.sheetId;
+    state.spreadsheetTitle = previous.spreadsheetTitle;
+    state.rows = previous.rows;
+    state.rosterReady = previous.rosterReady;
+    state.selectedRow = previous.selectedRow;
+    if (isMissingActivityError(e)) {
+      removeRecentEvent(id);
+      alert(`無法載入「${cachedEvent?.title || '此活動'}」。活動已不存在或不再可用，已從最近活動移除。`);
+    } else {
+      alert('無法載入此活動：' + (e.message || e));
+    }
     renderAdmin();
   } finally {
     setLoading(false);
@@ -408,6 +444,7 @@ async function enterApp() {
   try {
     await loadRows();
     state.spreadsheetTitle = await fetchSpreadsheetTitle(state.sheetId);
+    state.rosterReady = state.rows.length > 0;
     syncActivityUrl();
     if (state.role === 'admin') saveRecentEvent(state.sheetId, state.spreadsheetTitle || '');
     startAutoRefresh();
@@ -437,9 +474,16 @@ async function loadRows() {
 }
 
 async function refreshData() {
+  if (!state.sheetId) {
+    if (state.currentScreen === 'screen-list')  renderList();
+    if (state.currentScreen === 'screen-admin') renderAdmin();
+    return;
+  }
+
   setLoading(true);
   try {
     await loadRows();
+    state.rosterReady = state.rows.length > 0;
     if (state.currentScreen === 'screen-list')  renderList();
     if (state.currentScreen === 'screen-admin') renderAdminReport();
   } catch { alert('重新整理失敗，請檢查網路。'); }
@@ -772,8 +816,12 @@ function renderAdmin() {
   renderAllowListSection(); // async, self-managing
   const title = document.getElementById('dashboard-title');
   const subtitle = document.getElementById('dashboard-subtitle');
-  if (title) title.textContent = state.spreadsheetTitle || '建立並管理您的活動';
-  if (subtitle) subtitle.textContent = state.sheetId
+  if (title) title.textContent = state.rosterReady && state.spreadsheetTitle
+    ? state.spreadsheetTitle
+    : '建立並管理您的活動';
+  if (subtitle) subtitle.textContent = state.sheetId && !state.rosterReady
+    ? '活動已建立，請在右側上傳名單；完成後才會顯示活動資料。'
+    : state.sheetId
     ? '活動名單、列印、志工授權與出席報告皆集中在這裡。'
     : '先建立新活動或匯入填好的名單範本，即可開始管理。';
 }
@@ -781,7 +829,7 @@ function renderAdmin() {
 // ── Report (within Admin) ─────────────────────────────────────────────────────
 
 function renderAdminReport() {
-  const hasEvent = !!state.sheetId;
+  const hasEvent = !!state.sheetId && state.rosterReady;
 
   document.getElementById('event-none').style.display = hasEvent ? 'none' : '';
   document.getElementById('event-info').style.display = hasEvent ? '' : 'none';
@@ -802,8 +850,6 @@ function renderAdminReport() {
   document.getElementById('report-event-title').textContent = title || '（未命名活動）';
   document.getElementById('report-summary').textContent =
     `總數 ${total}　已報到 ${checked}　未報到 ${total - checked}`;
-  document.getElementById('event-open-link').href =
-    `https://docs.google.com/spreadsheets/d/${state.sheetId}/edit`;
   const shareUrl = activityShareUrl();
   document.getElementById('share-url').textContent = shareUrl;
   renderShareQr(shareUrl);
@@ -850,14 +896,17 @@ async function ensureIds() {
 
 async function generateQrCards() {
   hideError('qrgen-error');
-  if (!state.sheetId) { showError('qrgen-error', '請先建立或選擇活動。'); return; }
+  if (!state.sheetId || !state.rosterReady) {
+    showError('qrgen-error', '名單尚未上傳。請下載活動名單範本，填妥後由「建立或切換活動」區塊上傳。');
+    return;
+  }
 
   setLoading(true);
   try {
     await ensureIds();
     await loadRows();
     if (!state.rows.length) {
-      showError('qrgen-error', '名單是空的。請先按「在 Google 試算表開啟名單」，在 B 欄填入參加者姓名。');
+      showError('qrgen-error', '名單是空的。請下載活動名單範本，填妥後由「建立或切換活動」區塊上傳。');
       return;
     }
     openQrPrintWindow();
@@ -993,6 +1042,7 @@ async function addWalkIn() {
   try {
     const result = await apiAction('walkin.add', { sheetId: state.sheetId, name, address, notes });
     state.rows = result.rows;
+    state.rosterReady = true;
 
     // Reset form (keep notes default)
     document.getElementById('walkin-name').value    = '';
