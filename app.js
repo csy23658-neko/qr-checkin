@@ -10,6 +10,7 @@ const state = {
   sheetId:          null,
   spreadsheetTitle: null,
   rosterReady:      false,
+  pendingRosterEventId: null,
   allowListSheetId: null,
   rows:             [],     // [{ rowIndex, id, name, address, notes, checkinStamp, checkinBy }]
   selectedRow:      null,
@@ -22,6 +23,7 @@ const state = {
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 window.addEventListener('load', () => {
+  state.pendingRosterEventId = loadPendingRosterEventId();
   const createButton = document.getElementById('btn-create-event');
   if (createButton) createButton.addEventListener('click', createEvent);
   const downloadButton = document.getElementById('btn-download-template');
@@ -127,6 +129,52 @@ async function checkAllowList(email) {
 
 const EVENT_HEADERS = ['編號', '姓名', '通訊地址', '備註', '報到時間', '報到人員'];
 const IMPORT_HEADERS = EVENT_HEADERS.slice(0, 4);
+const PENDING_ROSTER_EVENT_KEY = 'qr-pending-roster-event';
+
+function loadPendingRosterEventId() {
+  try { return localStorage.getItem(PENDING_ROSTER_EVENT_KEY); } catch { return null; }
+}
+
+function setPendingRosterEventId(sheetId) {
+  state.pendingRosterEventId = sheetId || null;
+  try {
+    if (state.pendingRosterEventId) localStorage.setItem(PENDING_ROSTER_EVENT_KEY, state.pendingRosterEventId);
+    else localStorage.removeItem(PENDING_ROSTER_EVENT_KEY);
+  } catch {}
+}
+
+function canUploadRoster() {
+  return !!state.sheetId && !state.rosterReady && state.pendingRosterEventId === state.sheetId;
+}
+
+function clearImportWorkflow() {
+  hideError('import-error');
+  setImportStatus('');
+  const file = document.getElementById('input-activity-file');
+  if (file) file.value = '';
+}
+
+function clearActivityWorkflowMessages() {
+  hideError('create-error');
+  setCreateStatus('');
+  clearImportWorkflow();
+}
+
+function updateRosterUploadControls() {
+  const allowed = canUploadRoster();
+  const file = document.getElementById('input-activity-file');
+  const button = document.getElementById('btn-import-template');
+  const hint = document.getElementById('import-availability-hint');
+  if (file) file.disabled = !allowed;
+  if (button) button.disabled = !allowed;
+  if (hint) {
+    hint.textContent = allowed
+      ? `可上傳名單至剛建立的「${state.spreadsheetTitle || '新活動'}」。上傳成功後即鎖定名單。`
+      : state.sheetId
+      ? '目前載入的是既有活動，名單僅供查看與報告下載；若要匯入另一份名單，請先建立新活動。'
+      : '請先按「＋ 建立新活動」，再上傳該活動的名單。';
+  }
+}
 
 function downloadActivityTemplate() {
   const a = document.createElement('a');
@@ -160,9 +208,13 @@ async function importActivityTemplate() {
   hideError('create-error');
   hideError('import-error');
   setImportStatus('');
-  const name = document.getElementById('input-event-name').value.trim();
   const file = document.getElementById('input-activity-file').files[0];
-  if (!state.sheetId && !name) { showError('import-error', '請先建立活動，或輸入活動名稱後再上傳。'); return; }
+  if (!canUploadRoster()) {
+    showError('import-error', state.sheetId
+      ? '為避免覆寫既有活動，無法上傳名單至目前活動。請先建立新活動。'
+      : '請先按「＋ 建立新活動」，再上傳該活動的名單。');
+    return;
+  }
   if (!file) { showError('import-error', '請選擇已填寫的活動名單範本。'); return; }
   if (typeof XLSX === 'undefined') { showError('import-error', '匯入工具尚未載入，請重新整理後再試。'); return; }
 
@@ -193,30 +245,25 @@ async function importActivityTemplate() {
     }).filter(Boolean);
     if (!attendees.length) throw new Error('名單沒有任何參與者資料。');
 
-    if (state.sheetId) {
-      const currentActivityTitle = state.spreadsheetTitle || '目前活動';
-      setImportStatus(`正在將 ${attendees.length} 位參與者匯入「${currentActivityTitle}」…`);
-      const updated = await apiAction('event.roster.replace', {
-        sheetId: state.sheetId,
-        attendees: attendees.map(row => ({ id: row[0], name: row[1], address: row[2], notes: row[3] })),
-      });
-      state.spreadsheetTitle = state.spreadsheetTitle || updated.title;
-      state.rows = updated.rows;
-      state.rosterReady = true;
-      afterEventSelected();
-      setImportStatus(`已成功匯入 ${attendees.length} 位參與者至「${state.spreadsheetTitle || currentActivityTitle}」。`);
-    } else {
-      setImportStatus(`正在建立「${name}」並匯入 ${attendees.length} 位參與者…`);
-      const created = await createEventWithAttendees(name, attendees);
-      setImportStatus(`已建立「${created.title || name}」，並成功匯入 ${attendees.length} 位參與者。`);
-    }
+    const currentActivityTitle = state.spreadsheetTitle || '目前活動';
+    setImportStatus(`正在將 ${attendees.length} 位參與者匯入「${currentActivityTitle}」…`);
+    const updated = await apiAction('event.roster.replace', {
+      sheetId: state.sheetId,
+      attendees: attendees.map(row => ({ id: row[0], name: row[1], address: row[2], notes: row[3] })),
+    });
+    state.spreadsheetTitle = state.spreadsheetTitle || updated.title;
+    state.rows = updated.rows;
+    state.rosterReady = true;
+    setPendingRosterEventId(null);
+    afterEventSelected();
+    setImportStatus(`已成功匯入 ${attendees.length} 位參與者至「${state.spreadsheetTitle || currentActivityTitle}」。`, 8000);
     document.getElementById('input-activity-file').value = '';
   } catch (err) {
     setImportStatus('');
     showError('import-error', '上傳失敗：' + err.message);
   } finally {
-    button.disabled = false;
     button.textContent = '⬆ 上傳活動名單';
+    updateRosterUploadControls();
     setLoading(false);
   }
 }
@@ -257,6 +304,7 @@ async function createEventWithAttendees(name, attendees) {
     state.spreadsheetTitle = created.title;
     state.rows = created.rows;
     state.rosterReady = attendees.length > 0;
+    setPendingRosterEventId(state.rosterReady ? null : state.sheetId);
     document.getElementById('input-event-name').value = '';
     if (state.rosterReady) {
       afterEventSelected();
@@ -277,11 +325,13 @@ function afterEventSelected() {
 }
 
 function clearCurrentEvent() {
+  setPendingRosterEventId(null);
   state.sheetId = null;
   state.spreadsheetTitle = null;
   state.rows = [];
   state.rosterReady = false;
   state.selectedRow = null;
+  clearActivityWorkflowMessages();
   syncActivityUrl();
   renderAdmin();
 }
@@ -367,6 +417,7 @@ function renderRecentEvents() {
 }
 
 async function switchEvent(id) {
+  clearActivityWorkflowMessages();
   const previous = {
     sheetId: state.sheetId,
     spreadsheetTitle: state.spreadsheetTitle,
@@ -819,11 +870,14 @@ function renderAdmin() {
   if (title) title.textContent = state.rosterReady && state.spreadsheetTitle
     ? state.spreadsheetTitle
     : '建立並管理您的活動';
-  if (subtitle) subtitle.textContent = state.sheetId && !state.rosterReady
+  if (subtitle) subtitle.textContent = canUploadRoster()
     ? '活動已建立，請在右側上傳名單；完成後才會顯示活動資料。'
+    : state.sheetId && !state.rosterReady
+    ? '目前載入的既有活動尚無名單；為避免誤寫，請建立新活動後再匯入名單。'
     : state.sheetId
     ? '活動名單、列印、志工授權與出席報告皆集中在這裡。'
-    : '先建立新活動或匯入填好的名單範本，即可開始管理。';
+    : '先建立新活動，再匯入填好的名單範本，即可開始管理。';
+  updateRosterUploadControls();
 }
 
 // ── Report (within Admin) ─────────────────────────────────────────────────────
@@ -1230,11 +1284,24 @@ function setCreateStatus(message) {
   el.style.display = message ? '' : 'none';
 }
 
-function setImportStatus(message) {
+let importStatusTimer = null;
+
+function setImportStatus(message, autoDismissMs = 0) {
   const el = document.getElementById('import-status');
   if (!el) return;
+  if (importStatusTimer) clearTimeout(importStatusTimer);
+  importStatusTimer = null;
   el.textContent = message;
   el.style.display = message ? '' : 'none';
+  if (message && autoDismissMs > 0) {
+    importStatusTimer = setTimeout(() => {
+      if (el.textContent === message) {
+        el.textContent = '';
+        el.style.display = 'none';
+      }
+      importStatusTimer = null;
+    }, autoDismissMs);
+  }
 }
 
 function hideError(id) {

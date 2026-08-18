@@ -189,6 +189,15 @@ async function replaceRoster(env, user, payload) {
   const sheetId = String(payload.sheetId || '').trim();
   if (!sheetId) throw new Error('An activity must be selected before uploading a roster.');
   await assertEvent(env, sheetId);
+  const existing = await values(env, sheetId, 'A:F');
+  const hasExistingRosterData = (existing.values || []).slice(1).some(row =>
+    row.some(value => String(value ?? '').trim())
+  );
+  if (hasExistingRosterData) {
+    const error = new Error('此活動已有名單，為避免覆寫既有資料，系統已拒絕上傳。請先建立新活動。');
+    error.status = 409;
+    throw error;
+  }
   const attendees = payload.attendees || [];
   validateRows(attendees);
   const data = [['編號', '姓名', '通訊地址', '備註', '報到時間', '報到人員'],
