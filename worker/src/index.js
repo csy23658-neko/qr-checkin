@@ -78,12 +78,39 @@ async function googleAsAdmin(accessToken, url, options = {}) {
   return body;
 }
 
+async function retryGoogle(operation, attempts = 5) {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      const retryable = [403, 404, 429, 500, 502, 503, 504].includes(error?.status);
+      if (!retryable || attempt === attempts - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 250 * (2 ** attempt)));
+    }
+  }
+  throw lastError;
+}
+
+function googleStageError(label, error) {
+  const wrapped = new Error(`${label}：${error?.message || error}`);
+  wrapped.status = error?.status;
+  return wrapped;
+}
+
 async function values(env, sheetId, range) {
   return google(env, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}`);
 }
 
 async function put(env, sheetId, range, data) {
   return google(env, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ range, majorDimension: 'ROWS', values: data }),
+  });
+}
+
+async function putAsAdmin(accessToken, sheetId, range, data) {
+  return googleAsAdmin(accessToken, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(range)}?valueInputOption=RAW`, {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ range, majorDimension: 'ROWS', values: data }),
   });
 }
@@ -168,19 +195,42 @@ async function createEvent(env, user, payload) {
   if (!driveAccessToken) throw new Error('Google Drive authorization is required to create an activity.');
   if (!name) throw new Error('請輸入活動名稱。');
   validateRows(attendees);
-  const created = await googleAsAdmin(driveAccessToken, 'https://sheets.googleapis.com/v4/spreadsheets', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ properties: { title: name }, sheets: [{ properties: { title: '名單', gridProperties: { frozenRowCount: 1 } } }] }),
-  });
+  let created;
+  try {
+    created = await googleAsAdmin(driveAccessToken, 'https://sheets.googleapis.com/v4/spreadsheets', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ properties: { title: name }, sheets: [{ properties: { title: '名單', gridProperties: { frozenRowCount: 1 } } }] }),
+    });
+  } catch (error) {
+    throw googleStageError('建立 Google 試算表失敗', error);
+  }
+
   const data = [['編號', '姓名', '通訊地址', '備註', '報到時間', '報到人員'], ...attendees.map(row => [row.id, row.name, row.address || '', row.notes || '', '', ''])];
-  const service = JSON.parse(env.GOOGLE_SERVICE_ACCOUNT_JSON);
-  await googleAsAdmin(driveAccessToken, `https://www.googleapis.com/drive/v3/files/${created.spreadsheetId}/permissions?sendNotificationEmail=false`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ type: 'user', role: 'writer', emailAddress: service.client_email }),
-  });
-  await put(env, created.spreadsheetId, `A1:F${data.length}`, data);
-  await append(env, env.EVENT_REGISTRY_SHEET_ID, 'A:C', [[created.spreadsheetId, name, new Date().toISOString()]]);
-  return event(env, created.spreadsheetId);
+  try {
+    // The creator's OAuth token can write immediately.  Do this before sharing
+    // with the service account, whose permission may take a few seconds to
+    // propagate through Drive.
+    await putAsAdmin(driveAccessToken, created.spreadsheetId, `A1:F${data.length}`, data);
+  } catch (error) {
+    throw googleStageError('初始化活動名單失敗', error);
+  }
+
+  try {
+    const service = JSON.parse(env.GOOGLE_SERVICE_ACCOUNT_JSON);
+    await retryGoogle(() => googleAsAdmin(driveAccessToken, `https://www.googleapis.com/drive/v3/files/${created.spreadsheetId}/permissions?sendNotificationEmail=false`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'user', role: 'writer', emailAddress: service.client_email }),
+    }));
+  } catch (error) {
+    throw googleStageError('共用活動給系統服務帳號失敗', error);
+  }
+
+  try {
+    await retryGoogle(() => append(env, env.EVENT_REGISTRY_SHEET_ID, 'A:C', [[created.spreadsheetId, name, new Date().toISOString()]]));
+    return await retryGoogle(() => event(env, created.spreadsheetId));
+  } catch (error) {
+    throw googleStageError('完成活動註冊失敗', error);
+  }
 }
 
 async function replaceRoster(env, user, payload) {
