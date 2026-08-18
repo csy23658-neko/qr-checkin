@@ -398,12 +398,6 @@ html, body { height: 100%; overflow: hidden; font-family: 'Segoe UI', 'PingFang 
 }
 
 /* ── Admin: current event / sharing ────────────────────────────────────────── */
-.event-open-link {
-  display: inline-block;
-  font-size: 14px; color: var(--primary);
-  font-weight: 600; text-decoration: none;
-  margin-top: 4px;
-}
 .divider {
   border: none; border-top: 1px solid var(--border);
   margin: 6px 0;

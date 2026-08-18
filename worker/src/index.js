@@ -56,7 +56,11 @@ async function google(env, url, options = {}) {
     headers: { authorization: `Bearer ${await serviceToken(env)}`, ...(options.headers || {}) },
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error?.message || `Google API error (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(body.error?.message || `Google API error (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return body;
 }
 
@@ -66,7 +70,11 @@ async function googleAsAdmin(accessToken, url, options = {}) {
     headers: { authorization: `Bearer ${accessToken}`, ...(options.headers || {}) },
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error?.message || `Google API error (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(body.error?.message || `Google API error (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return body;
 }
 
@@ -111,10 +119,21 @@ async function userFrom(request, env) {
 function admin(user) { if (user.role !== 'admin') throw new Error('只有管理者可以執行此操作。'); }
 
 async function assertEvent(env, sheetId) {
-  const registry = await values(env, env.EVENT_REGISTRY_SHEET_ID, 'A:A');
+  if (!env.EVENT_REGISTRY_SHEET_ID) {
+    const error = new Error('系統活動登錄設定不完整，請聯絡系統管理者。');
+    error.status = 503;
+    throw error;
+  }
+  const registry = await values(env, env.EVENT_REGISTRY_SHEET_ID, 'A:B');
   // The registry may be newly created without a header row.  Accept a matching
   // entry anywhere so the first activity is usable as soon as it is registered.
-  if (!(registry.values || []).some(row => row[0] === sheetId)) throw new Error('此活動尚未由管理者註冊。');
+  const entry = (registry.values || []).find(row => row[0] === sheetId);
+  if (!entry) {
+    const error = new Error('此活動尚未由管理者註冊。');
+    error.status = 404;
+    throw error;
+  }
+  return String(entry[1] || '').trim();
 }
 
 function rowsFrom(data) {
@@ -134,12 +153,12 @@ function validateRows(rows) {
 }
 
 async function event(env, sheetId) {
-  await assertEvent(env, sheetId);
+  const registeredTitle = await assertEvent(env, sheetId);
   const [data, meta] = await Promise.all([
     values(env, sheetId, 'A:F'),
     google(env, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=properties.title`),
   ]);
-  return { sheetId, title: meta.properties?.title || '', rows: rowsFrom(data.values) };
+  return { sheetId, title: registeredTitle || meta.properties?.title || '', rows: rowsFrom(data.values) };
 }
 
 async function createEvent(env, user, payload) {
@@ -258,7 +277,7 @@ async function handle(request, env) {
     else throw new Error('不支援的操作。');
     return asJson(result, 200, cors);
   } catch (error) {
-    return asJson({ error: error.message || 'Request failed.' }, 400, cors);
+    return asJson({ error: error.message || 'Request failed.' }, error.status || 400, cors);
   }
 }
 
