@@ -360,15 +360,20 @@ function updateActivityPreviewMeta() {
 
 // ── Recent events (localStorage) ──────────────────────────────────────────────
 
+const RECENT_EVENT_LIMIT = 2;
+
 function getRecentEvents() {
-  try { return JSON.parse(localStorage.getItem('qr-recent-events')) || []; }
+  try {
+    const list = JSON.parse(localStorage.getItem('qr-recent-events')) || [];
+    return Array.isArray(list) ? list.filter(event => event && event.id).slice(0, RECENT_EVENT_LIMIT) : [];
+  }
   catch { return []; }
 }
 
 function saveRecentEvent(id, title) {
   const list = getRecentEvents().filter(e => e.id !== id);
   list.unshift({ id, title, ts: Date.now() });
-  try { localStorage.setItem('qr-recent-events', JSON.stringify(list.slice(0, 8))); } catch {}
+  try { localStorage.setItem('qr-recent-events', JSON.stringify(list.slice(0, RECENT_EVENT_LIMIT))); } catch {}
 }
 
 function removeRecentEvent(id) {
@@ -411,7 +416,19 @@ async function switchEvent(id) {
     state.spreadsheetTitle = null;
     state.rows = [];
     state.rosterReady = false;
-    await loadRows();
+    try {
+      await loadRows();
+    } catch (error) {
+      if (!isMissingActivityError(error)) throw error;
+
+      // Older activities may be valid Sheets that predate the event registry.
+      // Let the admin-only import flow validate the roster and register them
+      // before treating a recent activity as deleted.
+      const recovered = await apiAction('event.import', { sheetId: id });
+      state.sheetId = recovered.sheetId;
+      state.spreadsheetTitle = recovered.title;
+      state.rows = recovered.rows;
+    }
     state.rosterReady = true;
     afterEventSelected();
   } catch (e) {
