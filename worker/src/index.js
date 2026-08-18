@@ -111,10 +111,12 @@ async function userFrom(request, env) {
 function admin(user) { if (user.role !== 'admin') throw new Error('只有管理者可以執行此操作。'); }
 
 async function assertEvent(env, sheetId) {
-  const registry = await values(env, env.EVENT_REGISTRY_SHEET_ID, 'A:A');
+  const registry = await values(env, env.EVENT_REGISTRY_SHEET_ID, 'A:B');
   // The registry may be newly created without a header row.  Accept a matching
   // entry anywhere so the first activity is usable as soon as it is registered.
-  if (!(registry.values || []).some(row => row[0] === sheetId)) throw new Error('此活動尚未由管理者註冊。');
+  const entry = (registry.values || []).find(row => row[0] === sheetId);
+  if (!entry) throw new Error('此活動尚未由管理者註冊。');
+  return String(entry[1] || '').trim();
 }
 
 function rowsFrom(data) {
@@ -134,12 +136,16 @@ function validateRows(rows) {
 }
 
 async function event(env, sheetId) {
-  await assertEvent(env, sheetId);
+  const registeredTitle = await assertEvent(env, sheetId);
   const [data, meta] = await Promise.all([
     values(env, sheetId, 'A:F'),
     google(env, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=properties.title`),
   ]);
-  return { sheetId, title: meta.properties?.title || '', rows: rowsFrom(data.values) };
+  return {
+    sheetId,
+    title: registeredTitle || meta.properties?.title || '',
+    rows: rowsFrom(data.values),
+  };
 }
 
 async function createEvent(env, user, payload) {

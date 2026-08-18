@@ -190,16 +190,19 @@ async function importActivityTemplate() {
     if (!attendees.length) throw new Error('名單沒有任何參與者資料。');
 
     if (state.sheetId) {
-      setImportStatus(`正在將 ${attendees.length} 位參與者匯入「${state.spreadsheetTitle || '目前活動'}」…`);
+      const currentActivityTitle = state.spreadsheetTitle || '目前活動';
+      setImportStatus(`正在將 ${attendees.length} 位參與者匯入「${currentActivityTitle}」…`);
       const updated = await apiAction('event.roster.replace', {
         sheetId: state.sheetId,
         attendees: attendees.map(row => ({ id: row[0], name: row[1], address: row[2], notes: row[3] })),
       });
-      state.spreadsheetTitle = updated.title;
+      // The uploaded filename describes the source file, not the activity.
+      // Keep the selected activity name stable while replacing its roster.
+      state.spreadsheetTitle = state.spreadsheetTitle || updated.title;
       state.rows = updated.rows;
       state.rosterReady = true;
       afterEventSelected();
-      setImportStatus(`已成功匯入 ${attendees.length} 位參與者至「${updated.title}」。`);
+      setImportStatus(`已成功匯入 ${attendees.length} 位參與者至「${state.spreadsheetTitle || currentActivityTitle}」。`);
     } else {
       setImportStatus(`正在建立「${name}」並匯入 ${attendees.length} 位參與者…`);
       const created = await createEventWithAttendees(name, attendees);
