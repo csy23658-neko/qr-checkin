@@ -109,7 +109,11 @@ async function apiAction(action, payload = {}) {
     body: JSON.stringify({ action, ...payload }),
   });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error || `API error (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(result.error || `API error (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return result;
 }
 
@@ -367,6 +371,19 @@ function saveRecentEvent(id, title) {
   try { localStorage.setItem('qr-recent-events', JSON.stringify(list.slice(0, 8))); } catch {}
 }
 
+function removeRecentEvent(id) {
+  const list = getRecentEvents().filter(e => e.id !== id);
+  try { localStorage.setItem('qr-recent-events', JSON.stringify(list)); } catch {}
+}
+
+function isMissingActivityError(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  return error?.status === 404 ||
+    message.includes('requested entity was not found') ||
+    message.includes('此活動尚未由管理者註冊') ||
+    message.includes('not found');
+}
+
 function renderRecentEvents() {
   const el = document.getElementById('recent-events');
   if (!el) return;
@@ -381,19 +398,33 @@ function renderRecentEvents() {
 }
 
 async function switchEvent(id) {
+  const previous = {
+    sheetId: state.sheetId,
+    spreadsheetTitle: state.spreadsheetTitle,
+    rows: state.rows,
+    rosterReady: state.rosterReady,
+  };
+  const cachedEvent = getRecentEvents().find(event => event.id === id);
   setLoading(true);
   try {
     state.sheetId = id;
+    state.spreadsheetTitle = null;
+    state.rows = [];
+    state.rosterReady = false;
     await loadRows();
-    state.spreadsheetTitle = await fetchSpreadsheetTitle(id);
     state.rosterReady = true;
     afterEventSelected();
   } catch (e) {
-    state.sheetId = null;
-    state.rows    = [];
-    state.spreadsheetTitle = null;
-    state.rosterReady = false;
-    alert('無法載入此活動：' + (e.message || e));
+    state.sheetId = previous.sheetId;
+    state.spreadsheetTitle = previous.spreadsheetTitle;
+    state.rows = previous.rows;
+    state.rosterReady = previous.rosterReady;
+    if (isMissingActivityError(e)) {
+      removeRecentEvent(id);
+      alert(`無法載入「${cachedEvent?.title || '此活動'}」。活動可能已刪除、尚未註冊或目前帳號無法存取；已從最近活動移除。`);
+    } else {
+      alert('無法載入此活動：' + (e.message || e));
+    }
     renderAdmin();
   } finally {
     setLoading(false);

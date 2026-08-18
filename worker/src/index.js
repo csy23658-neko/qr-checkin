@@ -56,7 +56,11 @@ async function google(env, url, options = {}) {
     headers: { authorization: `Bearer ${await serviceToken(env)}`, ...(options.headers || {}) },
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error?.message || `Google API error (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(body.error?.message || `Google API error (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return body;
 }
 
@@ -66,7 +70,11 @@ async function googleAsAdmin(accessToken, url, options = {}) {
     headers: { authorization: `Bearer ${accessToken}`, ...(options.headers || {}) },
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.error?.message || `Google API error (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(body.error?.message || `Google API error (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return body;
 }
 
@@ -115,7 +123,11 @@ async function assertEvent(env, sheetId) {
   // The registry may be newly created without a header row.  Accept a matching
   // entry anywhere so the first activity is usable as soon as it is registered.
   const entry = (registry.values || []).find(row => row[0] === sheetId);
-  if (!entry) throw new Error('此活動尚未由管理者註冊。');
+  if (!entry) {
+    const error = new Error('此活動尚未由管理者註冊。');
+    error.status = 404;
+    throw error;
+  }
   return String(entry[1] || '').trim();
 }
 
@@ -264,7 +276,7 @@ async function handle(request, env) {
     else throw new Error('不支援的操作。');
     return asJson(result, 200, cors);
   } catch (error) {
-    return asJson({ error: error.message || 'Request failed.' }, 400, cors);
+    return asJson({ error: error.message || 'Request failed.' }, error.status || 400, cors);
   }
 }
 
