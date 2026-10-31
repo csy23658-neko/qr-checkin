@@ -13,6 +13,10 @@ const state = {
   pendingRosterEventId: null,
   allowListSheetId: null,
   rows:             [],     // [{ rowIndex, id, name, address, notes, checkinStamp, checkinBy }]
+  eventMeta:        { startDate: '', endDate: '', startTime: '', endTime: '', location: '', notice: '' },
+  batchDigits:      3,
+  batches:          [],
+  noticeRow:        null,
   selectedRow:      null,
   scanner:          null,
   scanCooldown:     false,
@@ -30,6 +34,13 @@ window.addEventListener('load', () => {
   if (downloadButton) downloadButton.addEventListener('click', downloadActivityTemplate);
   const importButton = document.getElementById('btn-import-template');
   if (importButton) importButton.addEventListener('click', importActivityTemplate);
+  const batchDigits = document.getElementById('batch-digits');
+  if (batchDigits) batchDigits.addEventListener('change', () => {
+    const current = readBatchForm();
+    state.batchDigits = current.digits;
+    state.batches = current.batches;
+    renderBatchEditor();
+  });
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
@@ -114,6 +125,7 @@ async function apiAction(action, payload = {}) {
   if (!response.ok) {
     const error = new Error(result.error || `API error (${response.status})`);
     error.status = response.status;
+    if (Array.isArray(result.details)) error.details = result.details;
     throw error;
   }
   return result;
@@ -127,9 +139,54 @@ async function checkAllowList(email) {
 
 // ── Event Setup ───────────────────────────────────────────────────────────────
 
-const EVENT_HEADERS = ['編號', '姓名', '通訊地址', '備註', '報到時間', '報到人員'];
+const EVENT_HEADERS = ['編號', '姓名', '通訊地址', '備註', '報到時間', '報到人員', '通知報到時段'];
 const IMPORT_HEADERS = EVENT_HEADERS.slice(0, 4);
 const PENDING_ROSTER_EVENT_KEY = 'qr-pending-roster-event';
+
+function eventMetadataFromForm() {
+  const value = id => document.getElementById(id)?.value.trim() || '';
+  return {
+    startDate: value('input-event-start-date'),
+    endDate: value('input-event-end-date'),
+    startTime: value('input-event-start-time'),
+    endTime: value('input-event-end-time'),
+    location: value('input-event-location'),
+    notice: value('input-event-notice'),
+  };
+}
+
+function applyEventMetadata(event) {
+  state.eventMeta = {
+    startDate: event?.startDate || '',
+    endDate: event?.endDate || '',
+    startTime: event?.startTime || '',
+    endTime: event?.endTime || '',
+    location: event?.location || '',
+    notice: event?.notice || '',
+  };
+  state.batchDigits = Number(event?.batchDigits) || 3;
+  state.batches = Array.isArray(event?.batches) ? event.batches.map(batch => ({
+    min: String(batch.min || ''), max: String(batch.max || ''), time: String(batch.time || ''),
+  })) : [];
+  const values = {
+    'input-event-start-date': state.eventMeta.startDate,
+    'input-event-end-date': state.eventMeta.endDate,
+    'input-event-start-time': state.eventMeta.startTime,
+    'input-event-end-time': state.eventMeta.endTime,
+    'input-event-location': state.eventMeta.location,
+    'input-event-notice': state.eventMeta.notice,
+    'batch-digits': state.batchDigits,
+  };
+  Object.entries(values).forEach(([id, current]) => {
+    const el = document.getElementById(id);
+    if (el) el.value = current;
+  });
+  renderBatchEditor();
+}
+
+function clearEventMetadataForm() {
+  applyEventMetadata({});
+}
 
 function loadPendingRosterEventId() {
   try { return localStorage.getItem(PENDING_ROSTER_EVENT_KEY); } catch { return null; }
@@ -190,18 +247,19 @@ function downloadMergeList() {
   if (typeof XLSX === 'undefined') { alert('匯出工具尚未載入，請重新整理後再試。'); return; }
   const ids = state.rows.map(r => r.id);
   if (new Set(ids).size !== ids.length) { alert('名單中有重複編號，請修正後再匯出。'); return; }
-  const rows = [IMPORT_HEADERS, ...state.rows.map(r => [r.id, r.name, r.address, r.notes])];
+  const mergeHeaders = [...IMPORT_HEADERS, '報到時段', 'QR內容'];
+  const rows = [mergeHeaders, ...state.rows.map(r => [r.id, r.name, r.address, r.notes, r.batchTime || '', qrPayloadFor(r.id)])];
   const sheet = XLSX.utils.aoa_to_sheet(rows);
-  sheet['!cols'] = [{ wch: 18 }, { wch: 16 }, { wch: 34 }, { wch: 26 }];
+  sheet['!cols'] = [{ wch: 18 }, { wch: 16 }, { wch: 34 }, { wch: 26 }, { wch: 18 }, { wch: 42 }];
   for (let row = 1; row <= rows.length; row++) {
-    for (let col = 0; col < IMPORT_HEADERS.length; col++) {
+    for (let col = 0; col < mergeHeaders.length; col++) {
       const cell = sheet[XLSX.utils.encode_cell({ r: row - 1, c: col })];
       if (cell) cell.z = '@';
     }
   }
   const book = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(book, sheet, '名單');
-  XLSX.writeFile(book, `${state.spreadsheetTitle || '活動'}_Word合併列印名單.xlsx`);
+  XLSX.writeFile(book, `${state.spreadsheetTitle || '活動'}_名單匯出.xlsx`);
 }
 
 async function importActivityTemplate() {
@@ -275,6 +333,7 @@ async function createEvent() {
   setCreateStatus('');
   const name = document.getElementById('input-event-name').value.trim();
   if (!name) { showError('create-error', '請輸入活動名稱。'); return; }
+  const metadata = eventMetadataFromForm();
 
   clearCurrentEvent();
 
@@ -284,7 +343,7 @@ async function createEvent() {
   setCreateStatus(`正在建立「${name}」的空白活動資料表…`);
   setLoading(true);
   try {
-    const created = await createEventWithAttendees(name, []);
+    const created = await createEventWithAttendees(name, [], metadata);
     hideError('create-error');
     setCreateStatus(`已建立「${created.title || name}」。請下載範本、填妥參與者資料後上傳匯入。`);
   } catch (err) {
@@ -297,13 +356,17 @@ async function createEvent() {
   }
 }
 
-async function createEventWithAttendees(name, attendees) {
+async function createEventWithAttendees(name, attendees, metadata = {}) {
     const driveAccessToken = await ensureDriveAccess();
-    const created = await apiAction('event.create', { name, driveAccessToken, attendees: attendees.map(row => ({ id: row[0], name: row[1], address: row[2], notes: row[3] })) });
+    const created = await apiAction('event.create', {
+      name, driveAccessToken, ...metadata,
+      attendees: attendees.map(row => ({ id: row[0], name: row[1], address: row[2], notes: row[3] })),
+    });
     state.sheetId = created.sheetId;
     state.spreadsheetTitle = created.title;
     state.rows = created.rows;
     state.rosterReady = attendees.length > 0;
+    applyEventMetadata(created);
     setPendingRosterEventId(state.rosterReady ? null : state.sheetId);
     document.getElementById('input-event-name').value = '';
     if (state.rosterReady) {
@@ -313,7 +376,6 @@ async function createEventWithAttendees(name, attendees) {
       saveRecentEvent(state.sheetId, state.spreadsheetTitle || '');
       renderAdmin();
     }
-    await shareWithVolunteers(true);
     return created;
 }
 
@@ -330,6 +392,11 @@ function clearCurrentEvent() {
   state.spreadsheetTitle = null;
   state.rows = [];
   state.rosterReady = false;
+  state.eventMeta = { startDate: '', endDate: '', startTime: '', endTime: '', location: '', notice: '' };
+  state.batchDigits = 3;
+  state.batches = [];
+  state.noticeRow = null;
+  clearEventMetadataForm();
   state.selectedRow = null;
   clearActivityWorkflowMessages();
   syncActivityUrl();
@@ -522,6 +589,7 @@ async function loadRows() {
   const event = await apiAction('event.get', { sheetId: state.sheetId });
   state.spreadsheetTitle = event.title;
   state.rows = event.rows;
+  applyEventMetadata(event);
 }
 
 async function refreshData() {
@@ -543,8 +611,8 @@ async function refreshData() {
 
 // ── Check-in Logic ────────────────────────────────────────────────────────────
 
-async function checkin(row, manual = false) {
-  const result = await apiAction('checkin', { sheetId: state.sheetId, id: row.id, manual });
+async function checkin(row, manual = false, qrPayload = '') {
+  const result = await apiAction('checkin', { sheetId: state.sheetId, id: row.id, manual, ...(qrPayload ? { qrPayload } : {}) });
   if (result.already) {
     const error = new Error('already');
     error.code = 'already';
@@ -631,25 +699,38 @@ async function onScanSuccess(rawCode) {
   state.scanCooldown = true;
 
   const code = rawCode.trim();
-  let row    = state.rows.find(r => r.id === code);
+  const parsed = parseClientQrPayload(code);
+  if (!parsed) {
+    scanFeedback('error');
+    flashResult('err', 'QR 格式不正確或已過期', code, null);
+    state.cooldownTimer = setTimeout(dismissScanResult, 3000);
+    return;
+  }
+  if (parsed.eventId !== state.sheetId) {
+    scanFeedback('error');
+    flashResult('err', '此 QR 不屬於目前活動', parsed.id, null);
+    state.cooldownTimer = setTimeout(dismissScanResult, 3000);
+    return;
+  }
+  let row    = state.rows.find(r => r.id === parsed.id);
 
   if (!row) {
     // Might be a person added from another device — reload once and retry
     try {
       await loadRows();
-      row = state.rows.find(r => r.id === code);
+      row = state.rows.find(r => r.id === parsed.id);
     } catch {}
   }
 
   if (!row) {
     scanFeedback('not-found');
-    flashResult('not-found', '未找到', code, null);
+    flashResult('not-found', '未找到', parsed.id, null);
   } else if (row.checkinStamp) {
     scanFeedback('already');
     flashResult('already', '已掃過', code, row);
   } else {
     try {
-      row = await checkin(row);
+      row = await checkin(row, false, code);
       scanFeedback('success');
       flashResult('success', '報到成功', code, row);
     } catch (e) {
@@ -862,38 +943,439 @@ async function manualUndo() {
 
 // ── Admin Screen ──────────────────────────────────────────────────────────────
 
+function formatEventMeta() {
+  const meta = state.eventMeta || {};
+  const date = meta.startDate && meta.endDate && meta.startDate !== meta.endDate
+    ? `${meta.startDate} 至 ${meta.endDate}`
+    : (meta.startDate || meta.endDate || '尚未設定日期');
+  const time = meta.startTime || meta.endTime
+    ? `${meta.startTime || '—'}${meta.endTime ? `–${meta.endTime}` : ''}`
+    : '尚未設定時間';
+  return [date, time, meta.location || '尚未設定地點'].join('　｜　');
+}
+
+function eventStatus() {
+  if (!state.sheetId) return '尚未建立';
+  if (state.rows.some(row => row.checkinStamp)) return '報到中';
+  if (state.eventMeta?.endDate) {
+    const end = Date.parse(`${state.eventMeta.endDate}T23:59:59+08:00`);
+    if (Number.isFinite(end) && Date.now() > end) return '已結束';
+  }
+  if (!state.rosterReady) return '設定中';
+  if (!state.batches.length) return '待設定分批';
+  return '可準備列印';
+}
+
+function renderEventContext() {
+  const hasEvent = !!state.sheetId;
+  const none = document.getElementById('event-none');
+  const info = document.getElementById('event-info');
+  if (none) none.style.display = hasEvent ? 'none' : '';
+  if (info) info.style.display = hasEvent ? '' : 'none';
+  if (!hasEvent) return;
+  const title = document.getElementById('report-event-title');
+  const meta = document.getElementById('event-meta-summary');
+  const status = document.getElementById('event-status');
+  if (title) title.textContent = state.spreadsheetTitle || '（未命名活動）';
+  if (meta) meta.textContent = formatEventMeta();
+  const summary = document.getElementById('report-summary');
+  if (summary && !state.rosterReady) summary.textContent = '名單尚未匯入';
+  if (status) status.textContent = eventStatus();
+  const save = document.getElementById('btn-save-event-settings');
+  if (save) save.disabled = !hasEvent;
+}
+
+async function saveEventSettings() {
+  if (!state.sheetId) return;
+  hideError('create-error');
+  setCreateStatus('正在儲存活動資料…');
+  setLoading(true);
+  try {
+    const updated = await apiAction('event.update', {
+      sheetId: state.sheetId,
+      ...eventMetadataFromForm(),
+    });
+    state.spreadsheetTitle = updated.title;
+    state.rows = updated.rows;
+    applyEventMetadata(updated);
+    setCreateStatus('✓ 活動資料已儲存', 5000);
+    renderAdmin();
+  } catch (err) {
+    setCreateStatus('');
+    showError('create-error', '儲存失敗：' + err.message);
+  } finally { setLoading(false); }
+}
+
+async function deleteCurrentEvent() {
+  if (!state.sheetId) return;
+  const title = state.spreadsheetTitle || '（未命名活動）';
+  const typed = window.prompt(`這會刪除「${title}」及其活動名單。\n若確定，請輸入完整活動名稱：`);
+  if (typed === null) return;
+  if (typed.trim() !== title.trim()) {
+    const msg = document.getElementById('delete-event-msg');
+    if (msg) { msg.textContent = '活動名稱不一致，未刪除。'; msg.style.display = ''; }
+    return;
+  }
+  const msg = document.getElementById('delete-event-msg');
+  if (msg) msg.style.display = 'none';
+  setLoading(true);
+  try {
+    const driveAccessToken = await ensureDriveAccess();
+    await apiAction('event.delete', { sheetId: state.sheetId, driveAccessToken });
+    removeRecentEvent(state.sheetId);
+    clearCurrentEvent();
+    setCreateStatus('活動已刪除；現在可以重新建立活動。', 8000);
+  } catch (err) {
+    if (msg) { msg.textContent = '刪除失敗：' + err.message; msg.style.display = ''; }
+  } finally { setLoading(false); }
+}
+
+function addBatchRow() {
+  state.batches.push({ min: '', max: '', time: '' });
+  renderBatchEditor();
+}
+
+function removeBatchRow(index) {
+  state.batches.splice(index, 1);
+  renderBatchEditor();
+}
+
+function renderBatchEditor() {
+  const el = document.getElementById('batch-rows');
+  if (!el) return;
+  const hasEvent = !!state.sheetId;
+  const save = document.getElementById('btn-save-batches');
+  if (save) save.disabled = !hasEvent;
+  if (!hasEvent) {
+    el.innerHTML = '<p class="msg-empty">請先建立或切換活動。</p>';
+    return;
+  }
+  const batches = state.batches.length ? state.batches : [{ min: '', max: '', time: '' }];
+  el.innerHTML = batches.map((batch, index) => `
+    <div class="batch-row">
+      <label class="field-label">起始尾數<input class="text-input batch-min" data-index="${index}" value="${esc(batch.min)}" placeholder="001"></label>
+      <label class="field-label">結束尾數<input class="text-input batch-max" data-index="${index}" value="${esc(batch.max)}" placeholder="430"></label>
+      <label class="field-label">報到時段<input class="text-input batch-time" data-index="${index}" value="${esc(batch.time)}" placeholder="10:00–10:45"></label>
+      <button type="button" class="btn-icon-danger" onclick="removeBatchRow(${index})">移除</button>
+    </div>`).join('');
+}
+
+function readBatchForm() {
+  const digits = Number(document.getElementById('batch-digits')?.value || 3);
+  const rows = [...document.querySelectorAll('#batch-rows .batch-row')];
+  return {
+    digits: Number.isInteger(digits) && digits >= 1 && digits <= 12 ? digits : 3,
+    batches: rows.map(row => ({
+      min: row.querySelector('.batch-min')?.value.trim() || '',
+      max: row.querySelector('.batch-max')?.value.trim() || '',
+      time: row.querySelector('.batch-time')?.value.trim() || '',
+    })).filter(batch => batch.min || batch.max || batch.time),
+  };
+}
+
+async function saveBatches() {
+  if (!state.sheetId) return;
+  hideError('batch-error');
+  const config = readBatchForm();
+  const status = document.getElementById('batch-status');
+  if (status) status.style.display = 'none';
+  setLoading(true);
+  try {
+    const updated = await apiAction('event.update', {
+      sheetId: state.sheetId,
+      ...eventMetadataFromForm(),
+      batches: config.batches,
+      batchDigits: config.digits,
+    });
+    state.rows = updated.rows;
+    state.spreadsheetTitle = updated.title;
+    applyEventMetadata(updated);
+    if (status) { status.textContent = '✓ 分批時段已儲存並套用到名單。'; status.style.display = ''; }
+    renderAdmin();
+  } catch (err) {
+    const detail = Array.isArray(err.details) ? `\n${err.details.join('\n')}` : '';
+    showError('batch-error', '儲存失敗：' + err.message + detail);
+  } finally { setLoading(false); }
+}
+
+function qrPayloadFor(id) {
+  return `qr-checkin:v2:${encodeURIComponent(state.sheetId || '')}:${encodeURIComponent(String(id || ''))}`;
+}
+
+function parseClientQrPayload(raw) {
+  const prefix = 'qr-checkin:v2:';
+  const code = String(raw || '').trim();
+  if (!code.startsWith(prefix)) return null;
+  const rest = code.slice(prefix.length);
+  const separator = rest.indexOf(':');
+  if (separator < 1) return null;
+  try {
+    return {
+      eventId: decodeURIComponent(rest.slice(0, separator)),
+      id: decodeURIComponent(rest.slice(separator + 1)),
+    };
+  } catch { return null; }
+}
+
+function renderNoticeResults() {
+  const el = document.getElementById('notice-results');
+  if (!el) return;
+  if (!state.rosterReady) { el.innerHTML = '<p class="msg-empty">名單匯入完成後才能查找參與者。</p>'; return; }
+  const q = (document.getElementById('notice-search')?.value || '').trim().toLowerCase();
+  const rows = (q ? state.rows.filter(row => String(row.id || '').toLowerCase().includes(q) || String(row.name || '').toLowerCase().includes(q)) : []).slice(0, 12);
+  if (!q) { el.innerHTML = '<p class="label">請輸入完整編號或姓名；編號是主要查找鍵。</p>'; return; }
+  if (!rows.length) { el.innerHTML = '<p class="msg-empty">找不到符合的參與者。</p>'; return; }
+  el.innerHTML = rows.map(row => `
+    <button type="button" class="notice-result-row${state.noticeRow?.rowIndex === row.rowIndex ? ' selected' : ''}" onclick="selectNoticeRow(${row.rowIndex})">
+      <span class="notice-result-main"><span class="notice-result-id">${esc(row.id)}</span><span class="notice-result-name">${esc(row.name)}</span><span class="notice-result-address">${esc(row.address || '（無地址）')}</span></span>
+      <span class="notice-result-time">${esc(row.batchTime || '未設定時段')}</span>
+    </button>`).join('');
+}
+
+function selectNoticeRow(rowIndex) {
+  const row = state.rows.find(item => item.rowIndex === rowIndex);
+  if (!row) return;
+  state.noticeRow = row;
+  const selected = document.getElementById('notice-selected');
+  if (selected) selected.style.display = '';
+  const name = document.getElementById('notice-selected-name');
+  const id = document.getElementById('notice-selected-id');
+  const address = document.getElementById('notice-address');
+  if (name) name.textContent = row.name;
+  if (id) id.textContent = row.id;
+  if (address) address.value = row.address || '';
+  renderNoticePreview();
+  renderNoticeResults();
+}
+
+function renderNoticePreview() {
+  const el = document.getElementById('notice-preview');
+  if (!el) return;
+  const row = state.noticeRow;
+  if (!row) { el.innerHTML = '<p class="msg-empty">查找並選擇參與者後，這裡會顯示通知單預覽。</p>'; return; }
+  let svg = '';
+  try { const qr = qrcode(0, 'M'); qr.addData(qrPayloadFor(row.id)); qr.make(); svg = qr.createSvgTag({ cellSize: 3, margin: 1 }); } catch {}
+  const meta = [row.address || '（無地址）', row.batchTime || '尚未設定報到時段', state.eventMeta?.location || '（未設定地點）'].join('\n');
+  el.innerHTML = `<div class="notice-preview-card"><div><div class="notice-preview-title">${esc(state.spreadsheetTitle || '活動通知單')}</div><div class="notice-preview-meta">${esc(row.id)}　${esc(row.name)}\n${esc(meta)}</div></div><div>${svg}</div></div>`;
+}
+
+async function saveNoticeAddress() {
+  if (!state.sheetId || !state.noticeRow) return;
+  const address = document.getElementById('notice-address')?.value.trim() || '';
+  hideError('notice-error');
+  setLoading(true);
+  try {
+    const updated = await apiAction('attendee.update', { sheetId: state.sheetId, id: state.noticeRow.id, address });
+    state.rows = updated.rows;
+    state.spreadsheetTitle = updated.title;
+    applyEventMetadata(updated);
+    state.noticeRow = state.rows.find(row => row.id === state.noticeRow.id) || null;
+    renderNoticeResults();
+    selectNoticeRow(state.noticeRow?.rowIndex);
+  } catch (err) {
+    showError('notice-error', '地址儲存失敗：' + err.message);
+  } finally { setLoading(false); }
+}
+
+function noticeRowsForOutput(rows) {
+  const selected = (rows || []).filter(row => row && row.id && !/^W-/.test(String(row.id)));
+  if (!selected.length) throw new Error('目前沒有可產出的參與者。');
+  ensureIds();
+  const missingTimes = selected.filter(row => !row.batchTime);
+  if (missingTimes.length) {
+    throw new Error(`尚有 ${missingTimes.length} 位參與者未分配報到時段，請先完成分批設定。`);
+  }
+  return selected;
+}
+
+function noticeDocumentHtml(rows) {
+  const meta = state.eventMeta || {};
+  const date = meta.startDate && meta.endDate && meta.startDate !== meta.endDate
+    ? `${meta.startDate} 至 ${meta.endDate}` : (meta.startDate || meta.endDate || '');
+  const time = meta.startTime || meta.endTime ? `${meta.startTime || ''}${meta.endTime ? `–${meta.endTime}` : ''}` : '';
+  const pages = rows.map(row => {
+    let qr = '';
+    try { const code = qrcode(0, 'M'); code.addData(qrPayloadFor(row.id)); code.make(); qr = code.createSvgTag({ cellSize: 4, margin: 1 }); } catch {}
+    return `<section class="notice-page"><div class="notice-copy"><h1>${esc(state.spreadsheetTitle || '活動通知單')}</h1><p class="notice-date">${esc(date)}${time ? `　${esc(time)}` : ''}</p><p><b>編號：</b>${esc(row.id)}</p><p><b>姓名：</b>${esc(row.name)}</p><p><b>通訊地址：</b>${esc(row.address || '（無地址）')}</p><p><b>報到時段：</b>${esc(row.batchTime)}</p><p><b>活動地點：</b>${esc(meta.location || '（未設定）')}</p><div class="notice-note">${esc(meta.notice || '請依通知單所列時段報到，並攜帶本通知單。')}</div></div><div class="notice-qr">${qr}<div>報到 QR Code</div><small>${esc(row.id)}</small></div></section>`;
+  }).join('');
+  return `<!doctype html><html lang="zh-TW"><head><meta charset="utf-8"><title>${esc(state.spreadsheetTitle || '活動通知單')}</title><style>
+  @page{size:A4;margin:0}*{box-sizing:border-box}body{margin:0;background:#eee;font-family:"Microsoft JhengHei","Noto Sans CJK TC",sans-serif;color:#222}.notice-page{width:210mm;min-height:297mm;padding:24mm 22mm;display:flex;justify-content:space-between;gap:16mm;page-break-after:always;background:#fff}.notice-page:last-child{page-break-after:auto}.notice-copy{flex:1}.notice-copy h1{text-align:center;font-size:24px;margin:0 0 10mm}.notice-date{text-align:center;font-size:15px;margin-bottom:15mm}.notice-copy p{font-size:17px;line-height:1.75;margin:5mm 0}.notice-note{margin-top:18mm;border-top:1px solid #888;padding-top:8mm;font-size:15px;line-height:1.8;white-space:pre-line}.notice-qr{width:48mm;text-align:center;font-size:12px;padding-top:28mm}.notice-qr svg{width:42mm;height:42mm}.notice-qr small{display:block;margin-top:3mm;color:#666}@media screen{.notice-page{margin:12px auto;box-shadow:0 1px 5px #aaa}}@media print{body{background:#fff}.notice-page{box-shadow:none;margin:0}}
+  </style></head><body>${pages}</body></html>`;
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function downloadNoticeWord(rows) {
+  const html = noticeDocumentHtml(rows);
+  downloadBlob(new Blob(['\ufeff', html], { type: 'application/msword;charset=utf-8' }), `${state.spreadsheetTitle || '活動'}_通知單_已合併.doc`);
+}
+
+function wrapCanvasText(ctx, text, maxWidth) {
+  const lines = [];
+  String(text || '').split('\n').forEach(segment => {
+    let line = '';
+    [...segment].forEach(char => {
+      const candidate = line + char;
+      if (line && ctx.measureText(candidate).width > maxWidth) { lines.push(line); line = char; }
+      else line = candidate;
+    });
+    lines.push(line);
+  });
+  return lines;
+}
+
+function qrSvgDataUrl(id) {
+  const qr = qrcode(0, 'M');
+  qr.addData(qrPayloadFor(id)); qr.make();
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr.createSvgTag({ cellSize: 5, margin: 1 }))}`;
+}
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image); image.onerror = reject; image.src = src;
+  });
+}
+
+async function renderNoticeJpeg(row) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 794; canvas.height = 1123;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#222'; ctx.textAlign = 'left'; ctx.font = 'bold 28px "Microsoft JhengHei", sans-serif';
+  ctx.fillText(state.spreadsheetTitle || '活動通知單', 100, 135);
+  ctx.font = '18px "Microsoft JhengHei", sans-serif';
+  const meta = state.eventMeta || {};
+  const date = meta.startDate && meta.endDate && meta.startDate !== meta.endDate ? `${meta.startDate} 至 ${meta.endDate}` : (meta.startDate || meta.endDate || '');
+  const time = meta.startTime || meta.endTime ? `${meta.startTime || ''}${meta.endTime ? `–${meta.endTime}` : ''}` : '';
+  ctx.fillText(`${date}${time ? `　${time}` : ''}`, 100, 175);
+  ctx.font = '22px "Microsoft JhengHei", sans-serif';
+  const lines = [
+    `編號：${row.id}`,
+    `姓名：${row.name}`,
+    `通訊地址：${row.address || '（無地址）'}`,
+    `報到時段：${row.batchTime}`,
+    `活動地點：${meta.location || '（未設定）'}`,
+  ];
+  let y = 280;
+  lines.forEach(line => { wrapCanvasText(ctx, line, 470).forEach(part => { ctx.fillText(part, 100, y); y += 42; }); y += 6; });
+  ctx.strokeStyle = '#888'; ctx.beginPath(); ctx.moveTo(100, y + 35); ctx.lineTo(694, y + 35); ctx.stroke();
+  ctx.font = '18px "Microsoft JhengHei", sans-serif';
+  y += 85;
+  wrapCanvasText(ctx, meta.notice || '請依通知單所列時段報到，並攜帶本通知單。', 594).forEach(line => { ctx.fillText(line, 100, y); y += 32; });
+  const qr = await loadImage(qrSvgDataUrl(row.id));
+  ctx.drawImage(qr, 520, 245, 205, 205);
+  ctx.font = '14px "Microsoft JhengHei", sans-serif'; ctx.textAlign = 'center'; ctx.fillText('報到 QR Code', 622, 475); ctx.fillText(row.id, 622, 498);
+  return canvas.toDataURL('image/jpeg', 0.92);
+}
+
+function base64Bytes(dataUrl) {
+  const binary = atob(dataUrl.split(',')[1]);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function asciiBytes(value) { return new TextEncoder().encode(value); }
+
+function buildImagePdf(jpegs) {
+  const pageWidth = 595; const pageHeight = 842; const imageWidth = 794; const imageHeight = 1123;
+  const pageObjects = jpegs.map((_, index) => ({ page: 3 + index * 3, content: 4 + index * 3, image: 5 + index * 3 }));
+  const objects = [];
+  objects[1] = asciiBytes('<< /Type /Catalog /Pages 2 0 R >>');
+  objects[2] = asciiBytes(`<< /Type /Pages /Kids [${pageObjects.map(item => `${item.page} 0 R`).join(' ')}] /Count ${pageObjects.length} >>`);
+  pageObjects.forEach((item, index) => {
+    objects[item.page] = asciiBytes(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /XObject << /Im0 ${item.image} 0 R >> >> /Contents ${item.content} 0 R >>`);
+    const content = `q\n${pageWidth} 0 0 ${pageHeight} 0 0 cm\n/Im0 Do\nQ\n`;
+    objects[item.content] = asciiBytes(`<< /Length ${asciiBytes(content).length} >>\nstream\n${content}endstream`);
+    const bytes = base64Bytes(jpegs[index]);
+    objects[item.image] = { bytes, header: `<< /Type /XObject /Subtype /Image /Width ${imageWidth} /Height ${imageHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.length} >>\nstream\n`, footer: '\nendstream' };
+  });
+  const chunks = [asciiBytes('%PDF-1.4\n%\xff\xff\xff\xff\n')];
+  const offsets = [0]; let length = chunks[0].length;
+  for (let index = 1; index < objects.length; index += 1) {
+    offsets[index] = length;
+    const object = objects[index];
+    const start = asciiBytes(`${index} 0 obj\n`);
+    const end = asciiBytes('\nendobj\n');
+    chunks.push(start); length += start.length;
+    if (object.bytes) { const header = asciiBytes(object.header); const footer = asciiBytes(object.footer); chunks.push(header, object.bytes, footer); length += header.length + object.bytes.length + footer.length; }
+    else { chunks.push(object); length += object.length; }
+    chunks.push(end); length += end.length;
+  }
+  const xrefOffset = length;
+  const xref = [`xref\n0 ${objects.length}\n0000000000 65535 f \n`];
+  for (let index = 1; index < objects.length; index += 1) xref.push(`${String(offsets[index]).padStart(10, '0')} 00000 n \n`);
+  xref.push(`trailer\n<< /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
+  chunks.push(asciiBytes(xref.join('')));
+  return new Blob(chunks, { type: 'application/pdf' });
+}
+
+async function downloadNoticePdf(rows) {
+  const jpegs = [];
+  for (const row of rows) jpegs.push(await renderNoticeJpeg(row));
+  downloadBlob(buildImagePdf(jpegs), `${state.spreadsheetTitle || '活動'}_通知單_已合併.pdf`);
+}
+
+async function generateNoticeDocuments(rows) {
+  hideError('notice-error');
+  try {
+    const outputRows = noticeRowsForOutput(rows);
+    setLoading(true);
+    await downloadNoticeWord(outputRows);
+    await downloadNoticePdf(outputRows);
+  } catch (err) {
+    showError('notice-error', '產出失敗：' + err.message);
+  } finally { setLoading(false); }
+}
+
+function generateAllNotices() { generateNoticeDocuments(state.rows); }
+function generateSelectedNotice() { if (!state.noticeRow) { showError('notice-error', '請先查找並選擇參與者。'); return; } generateNoticeDocuments([state.noticeRow]); }
+
 function renderAdmin() {
+  renderEventContext();
   renderAdminReport();
+  renderBatchEditor();
+  renderNoticeResults();
+  renderNoticePreview();
   renderAllowListSection(); // async, self-managing
   const title = document.getElementById('dashboard-title');
   const subtitle = document.getElementById('dashboard-subtitle');
-  if (title) title.textContent = state.rosterReady && state.spreadsheetTitle
+  if (title) title.textContent = state.sheetId && state.spreadsheetTitle
     ? state.spreadsheetTitle
     : '建立並管理您的活動';
   if (subtitle) subtitle.textContent = canUploadRoster()
-    ? '活動已建立，請在右側上傳名單；完成後才會顯示活動資料。'
+    ? '活動已建立，請完成名單匯入；接著設定分批、產出通知單並分享給志工。'
     : state.sheetId && !state.rosterReady
-    ? '目前載入的既有活動尚無名單；為避免誤寫，請建立新活動後再匯入名單。'
+    ? '目前活動尚無名單；為避免誤寫，請建立新活動後再匯入名單。'
     : state.sheetId
-    ? '活動名單、列印、志工授權與出席報告皆集中在這裡。'
-    : '先建立新活動，再匯入填好的名單範本，即可開始管理。';
+    ? '依序完成分批、通知單與分享；活動當天可直接前往掃描報到。'
+    : '先建立活動，再匯入名單、設定報到時段，即可產出通知單。';
   updateRosterUploadControls();
 }
 
 // ── Report (within Admin) ─────────────────────────────────────────────────────
 
 function renderAdminReport() {
-  const hasEvent = !!state.sheetId && state.rosterReady;
+  const hasEvent = !!state.sheetId;
+  const hasRoster = hasEvent && state.rosterReady;
 
   document.getElementById('event-none').style.display = hasEvent ? 'none' : '';
   document.getElementById('event-info').style.display = hasEvent ? '' : 'none';
-  document.getElementById('share-box').style.display  = hasEvent ? '' : 'none';
+  document.getElementById('share-box').style.display  = hasRoster ? '' : 'none';
+  const shareEmpty = document.getElementById('share-empty');
+  if (shareEmpty) shareEmpty.style.display = hasRoster ? 'none' : '';
   renderRecentEvents();
 
   const statsEl = document.getElementById('report-stats');
 
-  if (!hasEvent) {
-    statsEl.innerHTML = '<p class="msg-empty" style="padding:8px 0">尚未選擇活動</p>';
+  if (!hasRoster) {
+    statsEl.innerHTML = `<p class="msg-empty" style="padding:8px 0">${hasEvent ? '名單尚未匯入' : '尚未選擇活動'}</p>`;
     return;
   }
 
@@ -939,7 +1421,7 @@ function renderShareQr(shareUrl = activityShareUrl()) {
 // ── Attendee QR codes ─────────────────────────────────────────────────────────
 
 // A participant number is assigned by the event organizer and must never change.
-async function ensureIds() {
+function ensureIds() {
   const used = new Set(state.rows.map(row => row.id).filter(Boolean));
   const missing = state.rows.filter(row => row.name && !row.id).map(row => row.rowIndex);
   if (missing.length) throw new Error(`第 ${missing.join('、')} 列缺少編號；編號必須由活動方編入且不可自動產生。`);
@@ -976,7 +1458,7 @@ function openQrPrintWindow() {
     let svg = '';
     try {
       const q = qrcode(0, 'M');
-      q.addData(r.id);
+      q.addData(qrPayloadFor(r.id));
       q.make();
       svg = q.createSvgTag({ cellSize: 4, margin: 0 });
     } catch {}
@@ -1056,7 +1538,7 @@ function downloadReport() {
   const header  = EVENT_HEADERS;
   const csvRows = [
     header,
-    ...state.rows.map(r => [r.id, r.name, r.address, r.notes, r.checkinStamp, r.checkinBy]),
+    ...state.rows.map(r => [r.id, r.name, r.address, r.notes, r.checkinStamp, r.checkinBy, r.batchTime || '']),
   ];
   const csv  = csvRows.map(row =>
     row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')

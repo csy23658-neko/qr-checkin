@@ -1,0 +1,11 @@
+{
+  "name": "qr-checkin-event-bound-staging",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-01",
+  "vars": {
+    "ALLOWED_ORIGINS": "https://qr-checkin-event-bound-staging.pages.dev,http://127.0.0.1:4173,http://localhost:4173",
+      "ALLOW_LIST_SHEET_ID": "1Q3mq2Ac8m2TTJLdz2BU3_320GQdv7Q5nn-O4zjezzNM",
+      "EVENT_REGISTRY_SHEET_ID": "1OW_-Q9x9jWtYtrVe-T-n_XVNocqatomUO1yCN394rpU",
+    "GOOGLE_CLIENT_ID": "234893329401-s9cnhole5d3q885do2b5349btlifk46r.apps.googleusercontent.com"
+  }
+}

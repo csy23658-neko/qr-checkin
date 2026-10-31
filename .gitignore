@@ -6,3 +6,7 @@ tools/*預覽.png
 *.inspect.ndjson
 .dev.vars
 .wrangler/
+
+.worktrees/
+_letter_unpacked/
+*.docx

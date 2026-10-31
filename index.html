@@ -133,85 +133,170 @@
       </div>
 
       <!-- 目前活動 -->
-      <section class="card admin-panel admin-panel-current">
+      <section class="card admin-panel admin-panel-current admin-context-card">
         <div class="admin-panel-heading">
           <span class="admin-panel-icon">📊</span>
-          <div><h3>目前活動</h3><p>掌握出席情況與活動資料</p></div>
+          <div><h3>目前活動</h3><p>所有設定與產出都會套用到這一場活動</p></div>
         </div>
         <div id="event-none">
-          <p class="msg-empty" style="padding:8px 0">尚未選擇活動。<br>請在下方「建立或切換活動」開始。</p>
+          <p class="msg-empty" style="padding:8px 0">尚未選擇活動。<br>請從「1. 活動設定」開始。</p>
         </div>
         <div id="event-info" style="display:none">
-          <div id="report-event-title" class="report-event-title"></div>
-          <div id="report-summary"     class="report-summary"></div>
-        </div>
-        <div id="share-box" style="display:none">
-          <hr class="divider">
-          <p class="label"><b>步驟 1</b>｜確認允許名單中的志工可使用此活動：</p>
-          <button class="btn btn-secondary" onclick="shareWithVolunteers()">👥 確認志工帳號名單</button>
-          <p id="share-vols-msg" class="msg-success" style="display:none"></p>
-          <p class="label"><b>步驟 2</b>｜把活動連結傳給志工，或請他們掃描下方 QR 碼：</p>
-          <div class="share-url-row">
-            <code id="share-url" class="share-url"></code>
+          <div class="admin-context-main">
+            <div>
+              <div id="report-event-title" class="report-event-title"></div>
+              <div id="event-meta-summary" class="event-meta-summary"></div>
+              <div id="report-summary" class="report-summary"></div>
+            </div>
+            <span id="event-status" class="status-chip">設定中</span>
           </div>
-          <button id="btn-copy" class="btn btn-secondary" onclick="copyUrl()">📋 複製網址</button>
-          <div id="share-qr" class="share-qr"></div>
+          <div class="admin-context-actions">
+            <button class="btn btn-primary" onclick="goTo('screen-scan')">📷 前往掃描報到</button>
+            <button id="btn-delete-event" class="btn btn-danger" onclick="deleteCurrentEvent()">刪除／重新建立</button>
+          </div>
+          <p id="delete-event-msg" class="msg-error" style="display:none"></p>
         </div>
       </section>
 
-      <!-- 建立或切換活動 -->
-      <section class="card admin-panel admin-panel-events">
+      <!-- 1. 活動設定與名單 -->
+      <section class="card admin-panel admin-panel-events workflow-card">
+        <div class="workflow-step">1</div>
         <div class="admin-panel-heading">
           <span class="admin-panel-icon">🗂️</span>
-          <div><h3>建立或切換活動</h3><p>建議在電腦完成名單建立與匯入</p></div>
+          <div><h3>活動設定</h3><p>建立或切換活動，填寫通知單需要的基本資料</p></div>
         </div>
-        <p class="label">新活動名稱：</p>
-        <input id="input-event-name" type="text" class="text-input"
-          placeholder="例：2026 中秋敬老餐會">
+        <div class="workflow-grid">
+          <label class="field-label">新活動名稱
+            <input id="input-event-name" type="text" class="text-input" placeholder="例：2026 中秋敬老餐會">
+          </label>
+          <label class="field-label">活動開始日期
+            <input id="input-event-start-date" type="date" class="text-input">
+          </label>
+          <label class="field-label">活動結束日期
+            <input id="input-event-end-date" type="date" class="text-input">
+          </label>
+          <label class="field-label">開始時間
+            <input id="input-event-start-time" type="time" class="text-input">
+          </label>
+          <label class="field-label">結束時間
+            <input id="input-event-end-time" type="time" class="text-input">
+          </label>
+          <label class="field-label field-span-2">活動地點
+            <input id="input-event-location" type="text" class="text-input" placeholder="例：新生活中心一樓">
+          </label>
+          <label class="field-label field-span-2">通知單注意事項
+            <textarea id="input-event-notice" class="text-input" rows="2" placeholder="每場活動可自行修改的通知文字"></textarea>
+          </label>
+        </div>
         <p id="create-error" class="msg-error" style="display:none"></p>
         <p id="create-status" class="msg-success" role="status" style="display:none"></p>
-        <button id="btn-create-event" type="button" class="btn btn-primary">＋ 建立新活動</button>
+        <div class="button-row">
+          <button id="btn-create-event" type="button" class="btn btn-primary">＋ 建立新活動</button>
+          <button id="btn-save-event-settings" type="button" class="btn btn-secondary" onclick="saveEventSettings()" disabled>儲存活動資料</button>
+        </div>
+        <div id="recent-events"></div>
         <hr class="divider">
-        <p class="label"><b>匯入活動名單</b>｜建立新活動後，下載範本並在電腦以 Excel 填妥文字格式的編號、姓名、通訊地址與備註，再上傳至剛建立的新活動。</p>
+        <div class="substep-heading"><b>名單</b><span>建立新活動後，下載範本、填妥後上傳；上傳成功即鎖定整份名單。</span></div>
         <button id="btn-download-template" type="button" class="btn btn-secondary">⬇ 下載活動名單範本</button>
         <p id="import-availability-hint" class="label"></p>
         <input id="input-activity-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" class="text-input file-input">
         <p id="import-error" class="msg-error" style="display:none"></p>
         <p id="import-status" class="msg-success" role="status" style="display:none"></p>
         <button id="btn-import-template" type="button" class="btn btn-primary">⬆ 上傳活動名單</button>
-        <div id="recent-events"></div>
       </section>
 
-      <!-- 參加者 QR 碼 -->
-      <section class="card admin-panel admin-panel-print">
+      <!-- 2. 分批報到 -->
+      <section class="card admin-panel workflow-card" id="batch-panel">
+        <div class="workflow-step">2</div>
         <div class="admin-panel-heading">
-          <span class="admin-panel-icon">🖨️</span>
-          <div><h3>通知單與 QR 碼</h3><p>輸出給 Word 合併列印與現場掃碼</p></div>
+          <span class="admin-panel-icon">🕒</span>
+            <div><h3>分批報到時段</h3><p>預先登記者的時段完全依管理員設定的編號尾數範圍分配；現場報名者不需分批</p></div>
         </div>
-        <p class="label">QR 碼內容為參與者編號。列印前會檢查每筆資料都有唯一編號；系統不會自動編號或改動既有編號。</p>
-        <p id="qrgen-error" class="msg-error" style="display:none"></p>
-        <button class="btn btn-primary" onclick="generateQrCards()">🖨 產生 QR 碼（列印）</button>
-        <button class="btn btn-secondary" onclick="downloadMergeList()">⬇ 下載 Word 合併列印名單（Excel）</button>
+        <div class="batch-config-head">
+          <label class="field-label">編號尾數位數
+            <input id="batch-digits" type="number" class="text-input" min="1" max="12" value="3">
+          </label>
+          <p class="label">例如 001–430、431–859；儲存前會檢查重疊、格式、缺漏與未分配者。</p>
+        </div>
+        <div id="batch-rows" class="batch-rows"></div>
+        <button type="button" class="btn btn-secondary" onclick="addBatchRow()">＋ 新增報到批次</button>
+        <p id="batch-error" class="msg-error" style="display:none"></p>
+        <p id="batch-status" class="msg-success" role="status" style="display:none"></p>
+        <button id="btn-save-batches" type="button" class="btn btn-primary" onclick="saveBatches()">儲存分批設定</button>
+      </section>
+
+      <!-- 3. 通知單 -->
+      <section class="card admin-panel workflow-card admin-panel-print" id="notice-panel">
+        <div class="workflow-step">3</div>
+        <div class="admin-panel-heading">
+          <span class="admin-panel-icon">✉️</span>
+          <div><h3>通知單與 QR</h3><p>先預覽，再整批產出；地址修正後可只重產單一參與者。現場報名者不列入事前通知單</p></div>
+        </div>
+        <div class="notice-tools">
+          <label class="field-label">查找參與者（編號優先，姓名可輔助）
+            <input id="notice-search" type="search" class="text-input" placeholder="輸入完整編號或姓名" oninput="renderNoticeResults()">
+          </label>
+          <div id="notice-results" class="notice-results"></div>
+        </div>
+        <div id="notice-selected" class="notice-selected" style="display:none">
+          <div class="notice-selected-heading"><b id="notice-selected-name"></b><span id="notice-selected-id"></span></div>
+          <label class="field-label">通訊地址（修改後會寫回活動 Google Sheet）
+            <input id="notice-address" type="text" class="text-input">
+          </label>
+          <div class="button-row">
+            <button type="button" class="btn btn-secondary" onclick="saveNoticeAddress()">儲存地址</button>
+            <button type="button" class="btn btn-primary" onclick="generateSelectedNotice()">只產出這位通知單</button>
+          </div>
+        </div>
+        <div id="notice-preview" class="notice-preview"></div>
+        <p id="notice-error" class="msg-error" style="display:none"></p>
+        <div class="button-row">
+          <button type="button" class="btn btn-primary" onclick="generateAllNotices()">產生全部 Word／PDF</button>
+          <button type="button" class="btn btn-secondary" onclick="generateQrCards()">其他：只列印 QR 卡</button>
+        </div>
+        <details class="advanced">
+          <summary>進階匯出</summary>
+          <p class="label">供自訂 Word 版型、外部印刷或備份使用；一般流程不需要。</p>
+          <button type="button" class="btn btn-secondary" onclick="downloadMergeList()">下載名單 Excel（進階）</button>
+        </details>
+      </section>
+
+      <!-- 4. 分享給志工 -->
+      <section class="card admin-panel workflow-card" id="share-panel">
+        <div class="workflow-step">4</div>
+        <div class="admin-panel-heading">
+          <span class="admin-panel-icon">🔗</span>
+          <div><h3>分享給志工</h3><p>完成名單與通知單準備後，再把活動連結交給志工</p></div>
+        </div>
+        <div id="share-box" style="display:none">
+          <button class="btn btn-secondary" onclick="shareWithVolunteers()">👥 確認志工帳號名單</button>
+          <p id="share-vols-msg" class="msg-success" style="display:none"></p>
+          <div class="share-url-row"><code id="share-url" class="share-url"></code></div>
+          <button id="btn-copy" class="btn btn-secondary" onclick="copyUrl()">📋 複製網址</button>
+          <div id="share-qr" class="share-qr"></div>
+        </div>
+        <p id="share-empty" class="msg-empty">完成活動名單後，這裡會顯示可分享的活動連結。</p>
       </section>
 
       <!-- 出席報告 -->
-      <section class="card admin-panel admin-panel-report">
+      <section class="card admin-panel admin-panel-report workflow-card">
+        <div class="workflow-step muted">5</div>
         <div class="admin-panel-heading">
           <span class="admin-panel-icon">📈</span>
-          <div><h3>出席報告</h3><p>活動後列印或下載報到結果</p></div>
+          <div><h3>出席報告</h3><p>活動後查看及下載，保留為唯讀資料</p></div>
         </div>
         <div id="report-stats" class="report-stats"></div>
-        <button class="btn btn-primary"   onclick="printReport()">🖨 列印出席報告</button>
+        <button class="btn btn-primary" onclick="printReport()">🖨 列印出席報告</button>
         <button class="btn btn-secondary" onclick="downloadReport()">⬇ 下載 CSV（可用 Excel 開啟）</button>
       </section>
 
-      <!-- 志工帳號 -->
-      <section class="card admin-panel admin-panel-volunteers">
-        <div class="admin-panel-heading">
+      <!-- 系統設定：志工帳號 -->
+      <details class="card admin-panel admin-panel-volunteers system-settings">
+        <summary class="admin-panel-heading">
           <span class="admin-panel-icon">👥</span>
-          <div><h3>志工帳號</h3><p>管理可登入並執行報到的人員</p></div>
-        </div>
-        <p class="label">列在這裡的 Google 帳號才能登入使用本系統。</p>
+          <span><h3>系統設定：志工帳號</h3><p>管理可登入並執行報到的人員</p></span>
+        </summary>
+        <p class="label">列在這裡的 Google 帳號才能登入使用本系統；目前允許名單為全系統共用。</p>
         <div id="allowlist-container"></div>
         <div id="allowlist-add">
           <p class="label">新增帳號：</p>
@@ -219,17 +304,7 @@
           <p id="allowlist-add-error" class="msg-error" style="display:none"></p>
           <button class="btn btn-primary" onclick="addAllowListEmail()">新增</button>
         </div>
-      </section>
-
-      <!-- 信件產生器 -->
-      <section class="card admin-panel admin-panel-disabled">
-        <div class="admin-panel-heading">
-          <span class="admin-panel-icon">✉️</span>
-          <div><h3>信件產生器</h3><p>後續可於此建立通知內容</p></div>
-        </div>
-        <p class="admin-coming-soon">功能開發中，敬請期待</p>
-        <button class="btn btn-primary" disabled>產生信件</button>
-      </section>
+      </details>
 
     </div>
   </div>

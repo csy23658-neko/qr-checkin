@@ -438,3 +438,108 @@ details.advanced .label, details.advanced .text-input, details.advanced .btn { m
 
 /* Scan: walk-in shortcut */
 #scan-walkin-btn { width: 100%; }
+
+/* ── Admin workflow layout ─────────────────────────────────────────────────── */
+.workflow-card { position: relative; }
+.workflow-step {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: grid; place-items: center; flex-shrink: 0;
+  background: var(--primary); color: #fff; font-weight: 700;
+  position: absolute; top: 16px; left: 16px;
+}
+.workflow-step.muted { background: #9aa7bd; }
+.workflow-card > .admin-panel-heading,
+.workflow-card > .workflow-grid,
+.workflow-card > .batch-config-head,
+.workflow-card > .batch-rows,
+.workflow-card > .notice-tools,
+.workflow-card > .notice-selected,
+.workflow-card > .notice-preview,
+.workflow-card > .substep-heading,
+.workflow-card > .button-row,
+.workflow-card > .advanced,
+.workflow-card > #share-box,
+.workflow-card > #share-empty,
+.workflow-card > #report-stats,
+.workflow-card > #recent-events,
+.workflow-card > #input-activity-file,
+.workflow-card > #import-availability-hint,
+.workflow-card > #import-error,
+.workflow-card > #import-status,
+.workflow-card > #btn-import-template,
+.workflow-card > #btn-download-template,
+.workflow-card > #create-error,
+.workflow-card > #create-status,
+.workflow-card > #btn-create-event,
+.workflow-card > #batch-error,
+.workflow-card > #batch-status,
+.workflow-card > #btn-save-batches,
+.workflow-card > #notice-error,
+.workflow-card > .btn,
+.workflow-card > details { margin-left: 38px; }
+.admin-context-card { border: 2px solid #d7e0f2; }
+.admin-context-main { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.admin-context-actions, .button-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.admin-context-actions .btn, .button-row .btn { width: auto; flex: 1 1 180px; }
+.status-chip {
+  display: inline-flex; align-items: center; white-space: nowrap;
+  border-radius: 999px; padding: 5px 10px; font-size: 12px;
+  background: #fff4d6; color: #8b6500; border: 1px solid #f0d27e;
+}
+.event-meta-summary { color: var(--text-muted); font-size: 13px; margin-top: 6px; line-height: 1.6; }
+.field-label { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--text-muted); font-weight: 600; }
+.field-span-2 { grid-column: span 2; }
+.workflow-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.substep-heading { display: flex; flex-direction: column; gap: 3px; color: var(--text); font-size: 14px; }
+.substep-heading span { color: var(--text-muted); font-size: 13px; font-weight: 400; }
+.batch-config-head { display: flex; align-items: flex-end; gap: 12px; }
+.batch-config-head .field-label { flex: 0 0 150px; }
+.batch-config-head .label { flex: 1; }
+.batch-rows { display: flex; flex-direction: column; gap: 8px; }
+.batch-row { display: grid; grid-template-columns: 1fr 1fr 1.3fr auto; gap: 8px; align-items: end; }
+.batch-row .btn-icon-danger { height: 42px; }
+.notice-results { display: flex; flex-direction: column; gap: 6px; }
+.notice-result-row {
+  width: 100%; display: flex; justify-content: space-between; gap: 10px;
+  text-align: left; padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg); cursor: pointer;
+}
+.notice-result-row.selected { border-color: var(--primary); background: #eef3ff; }
+.notice-result-main { display: flex; flex-direction: column; gap: 2px; }
+.notice-result-id { font-weight: 700; color: var(--primary); }
+.notice-result-name { color: var(--text); }
+.notice-result-address, .notice-result-time { color: var(--text-muted); font-size: 12px; }
+.notice-selected { border: 1px solid #cbd7ef; background: #f8faff; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.notice-selected-heading { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.notice-selected-heading span { color: var(--text-muted); font-size: 13px; }
+.notice-preview { min-height: 80px; padding: 12px; border: 1px dashed var(--border); border-radius: 8px; background: #fff; }
+.notice-preview-card { display: grid; grid-template-columns: 1fr 110px; gap: 12px; align-items: center; }
+.notice-preview-card svg { width: 105px; height: 105px; }
+.notice-preview-title { font-weight: 700; font-size: 16px; }
+.notice-preview-meta { color: var(--text-muted); font-size: 13px; line-height: 1.6; white-space: pre-line; }
+.system-settings { grid-column: 1 / -1; }
+.system-settings > summary { list-style: none; cursor: pointer; }
+.system-settings > summary::-webkit-details-marker { display: none; }
+.system-settings > summary::after { content: '展開'; margin-left: auto; color: var(--text-muted); font-size: 13px; }
+.system-settings[open] > summary::after { content: '收合'; }
+.system-settings > #allowlist-container,
+.system-settings > #allowlist-add { margin-left: 38px; }
+
+@media (min-width: 900px) {
+  .admin-context-card, .workflow-card, .system-settings { grid-column: 1 / -1; }
+  .workflow-card { padding-right: 28px; }
+  .workflow-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .field-span-2 { grid-column: span 2; }
+}
+
+@media (max-width: 599px) {
+  .workflow-grid { grid-template-columns: 1fr; }
+  .field-span-2 { grid-column: auto; }
+  .batch-config-head { align-items: stretch; flex-direction: column; }
+  .batch-config-head .field-label { flex-basis: auto; }
+  .batch-row { grid-template-columns: 1fr 1fr; }
+  .batch-row .field-label:nth-child(3) { grid-column: 1 / -1; }
+  .batch-row .btn-icon-danger { grid-column: 2; }
+  .admin-context-main { flex-direction: column; }
+  .notice-preview-card { grid-template-columns: 1fr; }
+}
