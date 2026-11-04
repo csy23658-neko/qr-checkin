@@ -2,12 +2,13 @@
    Lets the app shell load with poor/no connectivity (data still needs network). */
 'use strict';
 
-const CACHE = 'qr-checkin-v4';
+const CACHE = 'qr-checkin-v5';
 const ASSETS = [
   './',
   './index.html',
   './style.css',
   './app.js',
+  './notice-template.js',
   './config.js',
   './manifest.json',
   './icon-192.png',
@@ -15,6 +16,7 @@ const ASSETS = [
   'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js',
   'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js',
   'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
   './活動名單範本.xlsx',
 ];
 

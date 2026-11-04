@@ -181,11 +181,20 @@
           <label class="field-label">結束時間
             <input id="input-event-end-time" type="time" class="text-input">
           </label>
-          <label class="field-label field-span-2">活動地點
-            <input id="input-event-location" type="text" class="text-input" placeholder="例：新生活中心一樓">
+          <label class="field-label field-span-2">活動通知範本
+            <select id="input-event-template" class="text-input" onchange="onEventTemplateChange()">
+              <option value="">系統預設版面（不使用範本）</option>
+            </select>
+            <span id="event-template-hint" class="field-hint">選擇範本後，會自動帶入該地點上次使用的說明、地點與導航連結，可再修改。</span>
           </label>
-          <label class="field-label field-span-2">通知單注意事項
-            <textarea id="input-event-notice" class="text-input" rows="2" placeholder="每場活動可自行修改的通知文字"></textarea>
+          <label class="field-label field-span-2">活動／發放地點
+            <input id="input-event-location" type="text" class="text-input" placeholder="例：三芝國小川堂（新北市三芝區育英街22號）">
+          </label>
+          <label class="field-label field-span-2">活動說明（通知單內文）
+            <textarea id="input-event-notice" class="text-input" rows="4" placeholder="合作單位、物資品項、領取方式等，每場活動可修改"></textarea>
+          </label>
+          <label class="field-label field-span-2">導航連結（Google 地圖網址）
+            <input id="input-event-nav-url" type="url" class="text-input" placeholder="空白則沿用範本內的導航 QR">
           </label>
         </div>
         <p id="create-error" class="msg-error" style="display:none"></p>
@@ -232,6 +241,7 @@
           <span class="admin-panel-icon">✉️</span>
           <div><h3>通知單與 QR</h3><p>先預覽，再整批產出；地址修正後可只重產單一參與者。現場報名者不列入事前通知單</p></div>
         </div>
+        <p id="notice-template-info" class="label"></p>
         <div class="notice-tools">
           <label class="field-label">查找參與者（編號優先，姓名可輔助）
             <input id="notice-search" type="search" class="text-input" placeholder="輸入完整編號或姓名" oninput="renderNoticeResults()">
@@ -251,7 +261,7 @@
         <div id="notice-preview" class="notice-preview"></div>
         <p id="notice-error" class="msg-error" style="display:none"></p>
         <div class="button-row">
-          <button type="button" class="btn btn-primary" onclick="generateAllNotices()">產生全部 Word／PDF</button>
+          <button type="button" id="btn-generate-all-notices" class="btn btn-primary" onclick="generateAllNotices()">產生全部 Word／PDF</button>
           <button type="button" class="btn btn-secondary" onclick="generateQrCards()">其他：只列印 QR 卡</button>
         </div>
         <details class="advanced">
@@ -289,6 +299,46 @@
         <button class="btn btn-primary" onclick="printReport()">🖨 列印出席報告</button>
         <button class="btn btn-secondary" onclick="downloadReport()">⬇ 下載 CSV（可用 Excel 開啟）</button>
       </section>
+
+      <!-- 系統設定：活動通知範本管理 -->
+      <details class="card admin-panel system-settings" id="template-panel">
+        <summary class="admin-panel-heading">
+          <span class="admin-panel-icon">📄</span>
+          <span><h3>系統設定：活動通知範本管理</h3><p>每個活動地點一份 Word 通知單範本，建立活動時直接選用</p></span>
+        </summary>
+        <div class="template-help">
+          <p class="label">在 Word 範本中，把每次要更換的文字改成下列標記（含大括號），其他內容與版面都會原樣保留：</p>
+          <p class="template-tags"><code>{{編號}}</code> <code>{{姓名}}</code> <code>{{通訊地址}}</code> <code>{{報到日期}}</code> <code>{{報到時段}}</code> <code>{{活動名稱}}</code> <code>{{活動日期}}</code> <code>{{活動時間}}</code> <code>{{活動說明}}</code> <code>{{活動地點}}</code></p>
+          <p class="label">QR Code：在範本中放一張圖片，於「替代文字」的描述填入 <code>{{報到QR}}</code>（每人不同）；導航 QR 的圖片填 <code>{{導航QR}}</code>（活動有填導航連結時才會更換）。</p>
+        </div>
+        <div id="template-list"></div>
+        <div class="template-form" id="template-form">
+          <h4 id="template-form-title">新增範本</h4>
+          <input type="hidden" id="template-id">
+          <label class="field-label">範本名稱（例：三芝國小）
+            <input id="template-name" type="text" class="text-input" placeholder="三芝國小">
+          </label>
+          <label class="field-label">Word 範本檔（.docx）
+            <input id="template-file" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="text-input file-input">
+            <span id="template-file-hint" class="field-hint"></span>
+          </label>
+          <label class="field-label">預設活動／發放地點
+            <input id="template-location" type="text" class="text-input">
+          </label>
+          <label class="field-label">預設活動說明
+            <textarea id="template-notice" class="text-input" rows="4"></textarea>
+          </label>
+          <label class="field-label">預設導航連結（可空白）
+            <input id="template-nav-url" type="url" class="text-input">
+          </label>
+          <p id="template-error" class="msg-error" style="display:none"></p>
+          <p id="template-status" class="msg-success" role="status" style="display:none"></p>
+          <div class="button-row">
+            <button type="button" class="btn btn-primary" onclick="saveTemplateForm()">儲存範本</button>
+            <button type="button" class="btn btn-secondary" onclick="resetTemplateForm()">清除表單</button>
+          </div>
+        </div>
+      </details>
 
       <!-- 系統設定：志工帳號 -->
       <details class="card admin-panel admin-panel-volunteers system-settings">
@@ -328,6 +378,8 @@
   <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="notice-template.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

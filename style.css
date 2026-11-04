@@ -543,3 +543,26 @@ details.advanced .label, details.advanced .text-input, details.advanced .btn { m
   .admin-context-main { flex-direction: column; }
   .notice-preview-card { grid-template-columns: 1fr; }
 }
+
+/* ── 活動通知範本管理 ─────────────────────────────────────────────────────── */
+.field-hint { display: block; margin-top: 4px; font-size: 12px; font-weight: 400; color: var(--text-muted); }
+.template-help { display: flex; flex-direction: column; gap: 6px; }
+.template-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.template-help code, .template-tags code { background: #eef3ff; border-radius: 4px; padding: 1px 6px; font-size: 13px; }
+.template-list { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin: 8px 0; }
+.template-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; background: var(--card); border-bottom: 1px solid var(--border);
+}
+.template-row:last-child { border-bottom: none; }
+.template-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.template-row-meta { font-size: 12px; color: var(--text-muted); word-break: break-all; }
+.template-row-actions { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
+.btn.btn-small { width: auto; padding: 6px 10px; font-size: 13px; min-height: 0; }
+.template-form { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--border); padding-top: 12px; margin-top: 4px; }
+.template-form h4 { margin: 0; font-size: 15px; }
+#template-status { white-space: pre-line; }
+@media (max-width: 600px) {
+  .template-row { flex-direction: column; align-items: stretch; }
+  .template-row-actions { justify-content: flex-end; }
+}

@@ -10,7 +10,13 @@ const taipeiTimestamp = () => new Date().toLocaleString('zh-TW', {
   timeZone: TAIPEI_TIME_ZONE,
 });
 
-const EVENT_REGISTRY_COLUMNS = 11;
+const EVENT_REGISTRY_COLUMNS = 13;
+const EVENT_REGISTRY_RANGE = 'A:M';
+const TEMPLATE_SHEET = '通知範本';
+const TEMPLATE_HEADER = ['範本ID', '名稱', '檔名', '更新時間', '更新者', '預設活動說明', '預設發放地點', '預設導航連結', '檔案大小', '分段數'];
+const TEMPLATE_META_COLUMNS = TEMPLATE_HEADER.length; // file chunks start after these columns
+const TEMPLATE_CHUNK_SIZE = 40000; // a Sheets cell holds at most 50,000 characters
+const TEMPLATE_MAX_BYTES = 1500000;
 const DEFAULT_BATCH_DIGITS = 3;
 
 function text(value) { return String(value ?? '').trim(); }
@@ -36,6 +42,8 @@ function eventMetaFromPayload(payload = {}, existing = {}) {
     endTime: text(payload.endTime ?? existing.endTime),
     location: text(payload.location ?? existing.location),
     notice: text(payload.notice ?? existing.notice),
+    templateId: text(payload.templateId ?? existing.templateId),
+    navUrl: text(payload.navUrl ?? existing.navUrl),
     batchDigits: Number.isInteger(digits) && digits >= 1 && digits <= 12 ? digits : DEFAULT_BATCH_DIGITS,
     batches: payload.batches === undefined ? parseBatches(existing.batches) : parseBatches(payload.batches),
   };
@@ -54,6 +62,8 @@ function registryRow(entry) {
     entry.notice || '',
     JSON.stringify(entry.batches || []),
     String(entry.batchDigits || DEFAULT_BATCH_DIGITS),
+    entry.templateId || '',
+    entry.navUrl || '',
   ]];
 }
 
@@ -72,6 +82,8 @@ function registryEntry(row, rowIndex) {
     notice: text(row[8]),
     batches: parseBatches(row[9]),
     batchDigits: Number(row[10]) || DEFAULT_BATCH_DIGITS,
+    templateId: text(row[11]),
+    navUrl: text(row[12]),
   };
 }
 
@@ -189,7 +201,7 @@ async function assertEvent(env, sheetId) {
     error.status = 503;
     throw error;
   }
-  const registry = await values(env, env.EVENT_REGISTRY_SHEET_ID, 'A:K');
+  const registry = await values(env, env.EVENT_REGISTRY_SHEET_ID, EVENT_REGISTRY_RANGE);
   // The registry may be newly created without a header row.  Accept a matching
   // entry anywhere so the first activity is usable as soon as it is registered.
   const rowIndex = (registry.values || []).findIndex(row => text(row[0]) === sheetId);
@@ -234,6 +246,8 @@ async function event(env, sheetId) {
     endTime: registered.endTime,
     location: registered.location,
     notice: registered.notice,
+    templateId: registered.templateId,
+    navUrl: registered.navUrl,
     batchDigits: registered.batchDigits,
     batches: registered.batches,
     rows: rowsFrom(data.values),
@@ -260,7 +274,7 @@ async function createEvent(env, user, payload) {
     body: JSON.stringify({ type: 'user', role: 'writer', emailAddress: service.client_email }),
   });
   await put(env, created.spreadsheetId, `A1:G${data.length}`, data);
-  await append(env, env.EVENT_REGISTRY_SHEET_ID, 'A:K', registryRow({
+  await append(env, env.EVENT_REGISTRY_SHEET_ID, EVENT_REGISTRY_RANGE, registryRow({
     sheetId: created.spreadsheetId,
     title: name,
     createdAt: new Date().toISOString(),
@@ -312,7 +326,7 @@ async function importEvent(env, user, payload) {
   if (((data.values || [])[0] || []).slice(0, 4).join('|') !== '編號|姓名|通訊地址|備註') throw new Error('活動名單欄位必須為：編號、姓名、通訊地址、備註。');
   validateRows(rowsFrom(data.values));
   const meta = await google(env, `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=properties.title`);
-  await append(env, env.EVENT_REGISTRY_SHEET_ID, 'A:K', registryRow({
+  await append(env, env.EVENT_REGISTRY_SHEET_ID, EVENT_REGISTRY_RANGE, registryRow({
     sheetId,
     title: meta.properties?.title || '',
     createdAt: new Date().toISOString(),
@@ -375,7 +389,7 @@ function validateAndAssignBatches(rows, batches, digits) {
 }
 
 async function updateRegistryEntry(env, entry, metadata) {
-  await put(env, env.EVENT_REGISTRY_SHEET_ID, `A${entry.rowIndex}:K${entry.rowIndex}`, registryRow({
+  await put(env, env.EVENT_REGISTRY_SHEET_ID, `A${entry.rowIndex}:M${entry.rowIndex}`, registryRow({
     ...entry,
     ...metadata,
   }));
@@ -455,7 +469,7 @@ async function deleteEvent(env, user, payload) {
     body: JSON.stringify({ trashed: true }),
   });
   try {
-    await clearValues(env, env.EVENT_REGISTRY_SHEET_ID, `A${entry.rowIndex}:K${entry.rowIndex}`);
+    await clearValues(env, env.EVENT_REGISTRY_SHEET_ID, `A${entry.rowIndex}:M${entry.rowIndex}`);
   } catch (error) {
     try {
       await googleAsAdmin(driveAccessToken, `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(sheetId)}?supportsAllDrives=true`, {
@@ -551,6 +565,155 @@ async function addWalkin(env, user, payload) {
   return event(env, payload.sheetId);
 }
 
+// ── Notice templates ─────────────────────────────────────────────────────────
+// One Word template per venue, stored in a tab of the event registry sheet so
+// everything stays in Google Sheets.  The .docx is kept base64-encoded and split
+// across cells after the metadata columns.
+
+let templateSheetReady = false;
+
+function templateRange(range) { return `'${TEMPLATE_SHEET}'!${range}`; }
+
+async function ensureTemplateSheet(env) {
+  if (templateSheetReady) return;
+  const meta = await google(env, `https://sheets.googleapis.com/v4/spreadsheets/${env.EVENT_REGISTRY_SHEET_ID}?fields=sheets.properties.title`);
+  const exists = (meta.sheets || []).some(sheet => sheet.properties?.title === TEMPLATE_SHEET);
+  if (!exists) {
+    await google(env, `https://sheets.googleapis.com/v4/spreadsheets/${env.EVENT_REGISTRY_SHEET_ID}:batchUpdate`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ requests: [{ addSheet: { properties: { title: TEMPLATE_SHEET, gridProperties: { frozenRowCount: 1 } } } }] }),
+    });
+    await put(env, env.EVENT_REGISTRY_SHEET_ID, templateRange('A1:J1'), [TEMPLATE_HEADER]);
+  }
+  templateSheetReady = true;
+}
+
+function templateEntry(row, rowIndex) {
+  if (!row || !text(row[0]) || text(row[0]) === TEMPLATE_HEADER[0]) return null;
+  return {
+    rowIndex,
+    id: text(row[0]),
+    name: text(row[1]),
+    fileName: text(row[2]),
+    updatedAt: text(row[3]),
+    updatedBy: text(row[4]),
+    defaults: { notice: String(row[5] ?? ''), location: text(row[6]), navUrl: text(row[7]) },
+    size: Number(row[8]) || 0,
+    chunks: Number(row[9]) || 0,
+  };
+}
+
+async function templateEntries(env) {
+  await ensureTemplateSheet(env);
+  const data = await values(env, env.EVENT_REGISTRY_SHEET_ID, templateRange('A:J'));
+  return (data.values || []).map((row, index) => templateEntry(row, index + 1)).filter(Boolean);
+}
+
+async function findTemplate(env, id) {
+  const entry = (await templateEntries(env)).find(item => item.id === text(id));
+  if (!entry) {
+    const error = new Error('找不到此通知範本。');
+    error.status = 404;
+    throw error;
+  }
+  return entry;
+}
+
+function publicTemplate(entry) {
+  const { rowIndex, chunks, ...rest } = entry;
+  return rest;
+}
+
+async function listTemplates(env, user) {
+  admin(user);
+  const [entries, registry] = await Promise.all([
+    templateEntries(env),
+    values(env, env.EVENT_REGISTRY_SHEET_ID, EVENT_REGISTRY_RANGE),
+  ]);
+  // The most recent event that used each template supplies its suggested text,
+  // so a venue's wording carries over from one event to the next.
+  const lastUsed = new Map();
+  (registry.values || []).forEach((row, index) => {
+    const event = registryEntry(row, index + 1);
+    if (!event || !event.templateId) return;
+    const previous = lastUsed.get(event.templateId);
+    if (!previous || String(event.createdAt) > String(previous.createdAt)) lastUsed.set(event.templateId, event);
+  });
+  return {
+    templates: entries.map(entry => {
+      const used = lastUsed.get(entry.id);
+      return {
+        ...publicTemplate(entry),
+        lastUsed: used ? { title: used.title, createdAt: used.createdAt, notice: used.notice, location: used.location, navUrl: used.navUrl } : null,
+      };
+    }),
+  };
+}
+
+async function getTemplate(env, user, payload) {
+  admin(user);
+  const entry = await findTemplate(env, payload.id);
+  const data = await values(env, env.EVENT_REGISTRY_SHEET_ID, templateRange(`${entry.rowIndex}:${entry.rowIndex}`));
+  const row = (data.values || [])[0] || [];
+  const base64 = row.slice(TEMPLATE_META_COLUMNS, TEMPLATE_META_COLUMNS + entry.chunks).join('');
+  if (!base64) throw new Error('此通知範本沒有檔案，請重新上傳。');
+  return { ...publicTemplate(entry), data: base64 };
+}
+
+async function saveTemplate(env, user, payload) {
+  admin(user);
+  const entries = await templateEntries(env);
+  const id = text(payload.id);
+  const existing = id ? entries.find(item => item.id === id) : null;
+  if (id && !existing) throw new Error('找不到此通知範本。');
+  const name = text(payload.name);
+  if (!name) throw new Error('請輸入範本名稱。');
+  if (entries.some(item => item.id !== id && item.name.toLowerCase() === name.toLowerCase())) {
+    throw new Error(`已有名為「${name}」的範本。`);
+  }
+  const data = text(payload.data);
+  if (!existing && !data) throw new Error('請選擇範本檔案（Word .docx）。');
+  let size = existing?.size || 0;
+  let chunks = null;
+  if (data) {
+    if (!/^[A-Za-z0-9+/]+=*$/.test(data) || !data.startsWith('UEsDB')) throw new Error('範本檔案必須是 Word（.docx）格式。');
+    size = Math.floor(data.length * 3 / 4);
+    if (size > TEMPLATE_MAX_BYTES) throw new Error('範本檔案太大（上限 1.5 MB），請壓縮圖片後再上傳。');
+    chunks = [];
+    for (let i = 0; i < data.length; i += TEMPLATE_CHUNK_SIZE) chunks.push(data.slice(i, i + TEMPLATE_CHUNK_SIZE));
+  }
+  const meta = [
+    existing?.id || crypto.randomUUID(),
+    name,
+    text(payload.fileName) || existing?.fileName || '',
+    taipeiTimestamp(),
+    user.email,
+    String(payload.notice ?? existing?.defaults.notice ?? ''),
+    text(payload.location ?? existing?.defaults.location),
+    text(payload.navUrl ?? existing?.defaults.navUrl),
+    String(size),
+    String(chunks ? chunks.length : existing.chunks),
+  ];
+  if (existing) {
+    if (chunks) {
+      await clearValues(env, env.EVENT_REGISTRY_SHEET_ID, templateRange(`${existing.rowIndex}:${existing.rowIndex}`));
+      await put(env, env.EVENT_REGISTRY_SHEET_ID, templateRange(`A${existing.rowIndex}`), [[...meta, ...chunks]]);
+    } else {
+      await put(env, env.EVENT_REGISTRY_SHEET_ID, templateRange(`A${existing.rowIndex}:J${existing.rowIndex}`), [meta]);
+    }
+  } else {
+    await append(env, env.EVENT_REGISTRY_SHEET_ID, templateRange('A:A'), [[...meta, ...chunks]]);
+  }
+  return listTemplates(env, user);
+}
+
+async function deleteTemplate(env, user, payload) {
+  admin(user);
+  const entry = await findTemplate(env, payload.id);
+  await clearValues(env, env.EVENT_REGISTRY_SHEET_ID, templateRange(`${entry.rowIndex}:${entry.rowIndex}`));
+  return listTemplates(env, user);
+}
+
 async function handle(request, env) {
   const cors = allowedCors(request, env);
   if (request.method === 'OPTIONS') return new Response(null, { headers: { ...cors, 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'authorization, content-type' } });
@@ -572,6 +735,10 @@ async function handle(request, env) {
     else if (payload.action === 'walkin.add') result = await addWalkin(env, user, payload);
     else if (payload.action === 'allowlist') result = await allowList(env, user, payload);
     else if (payload.action === 'event.share') result = await shareEvent(env, user, payload);
+    else if (payload.action === 'template.list') result = await listTemplates(env, user);
+    else if (payload.action === 'template.get') result = await getTemplate(env, user, payload);
+    else if (payload.action === 'template.save') result = await saveTemplate(env, user, payload);
+    else if (payload.action === 'template.delete') result = await deleteTemplate(env, user, payload);
     else throw new Error('不支援的操作。');
     return asJson(result, 200, cors);
   } catch (error) {

@@ -13,7 +13,12 @@ const state = {
   pendingRosterEventId: null,
   allowListSheetId: null,
   rows:             [],     // [{ rowIndex, id, name, address, notes, checkinStamp, checkinBy }]
-  eventMeta:        { startDate: '', endDate: '', startTime: '', endTime: '', location: '', notice: '' },
+  eventMeta:        { startDate: '', endDate: '', startTime: '', endTime: '', location: '', notice: '', templateId: '', navUrl: '' },
+  templates:        [],     // 活動通知範本 list from the API
+  templatesError:   '',
+  templatesLoaded:  false,
+  templateFiles:    {},     // id -> { updatedAt, bytes } cache of downloaded templates
+  driveReject:      null,
   batchDigits:      3,
   batches:          [],
   noticeRow:        null,
@@ -72,13 +77,23 @@ function initAuth() {
     // Sheet and avoids asking for access to every spreadsheet in the account.
     scope: 'https://www.googleapis.com/auth/drive.file',
     callback: () => {},
+    error_callback: error => {
+      const reject = state.driveReject;
+      state.driveReject = null;
+      if (!reject) return;
+      reject(new Error(error?.type === 'popup_failed_to_open'
+        ? 'Google 授權視窗被瀏覽器封鎖。請允許此網站開啟彈出視窗後再試一次。'
+        : '未完成 Google Drive 授權（授權視窗已關閉）。'));
+    },
   });
 }
 
 function ensureDriveAccess() {
   if (state.driveAccessToken) return Promise.resolve(state.driveAccessToken);
   return new Promise((resolve, reject) => {
+    state.driveReject = reject;
     state.driveTokenClient.callback = response => {
+      state.driveReject = null;
       if (response.error || !response.access_token) return reject(new Error('未取得建立活動所需的 Google Drive 授權。'));
       state.driveAccessToken = response.access_token;
       resolve(response.access_token);
@@ -151,11 +166,16 @@ function eventMetadataFromForm() {
     startTime: value('input-event-start-time'),
     endTime: value('input-event-end-time'),
     location: value('input-event-location'),
-    notice: value('input-event-notice'),
+    notice: document.getElementById('input-event-notice')?.value.replace(/\s+$/, '') || '',
+    templateId: value('input-event-template'),
+    navUrl: value('input-event-nav-url'),
   };
 }
 
-function applyEventMetadata(event) {
+// syncForm: false is used by the 5-second background refresh.  It keeps the
+// saved event data current without overwriting fields the administrator is
+// still editing (re-rendering the form also dropped keyboard focus).
+function applyEventMetadata(event, { syncForm = true } = {}) {
   state.eventMeta = {
     startDate: event?.startDate || '',
     endDate: event?.endDate || '',
@@ -163,7 +183,13 @@ function applyEventMetadata(event) {
     endTime: event?.endTime || '',
     location: event?.location || '',
     notice: event?.notice || '',
+    templateId: event?.templateId || '',
+    navUrl: event?.navUrl || '',
   };
+  if (!syncForm) {
+    renderNoticeTemplateInfo();
+    return;
+  }
   state.batchDigits = Number(event?.batchDigits) || 3;
   state.batches = Array.isArray(event?.batches) ? event.batches.map(batch => ({
     min: String(batch.min || ''), max: String(batch.max || ''), time: String(batch.time || ''),
@@ -175,12 +201,15 @@ function applyEventMetadata(event) {
     'input-event-end-time': state.eventMeta.endTime,
     'input-event-location': state.eventMeta.location,
     'input-event-notice': state.eventMeta.notice,
+    'input-event-nav-url': state.eventMeta.navUrl,
     'batch-digits': state.batchDigits,
   };
   Object.entries(values).forEach(([id, current]) => {
     const el = document.getElementById(id);
     if (el) el.value = current;
   });
+  renderTemplateSelect();
+  renderNoticeTemplateInfo();
   renderBatchEditor();
 }
 
@@ -585,11 +614,11 @@ async function fetchSpreadsheetTitle(sheetId) {
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
-async function loadRows() {
+async function loadRows({ syncForm = true } = {}) {
   const event = await apiAction('event.get', { sheetId: state.sheetId });
   state.spreadsheetTitle = event.title;
   state.rows = event.rows;
-  applyEventMetadata(event);
+  applyEventMetadata(event, { syncForm });
 }
 
 async function refreshData() {
@@ -646,7 +675,7 @@ function startAutoRefresh() {
     if (state.currentScreen !== 'screen-list' && state.currentScreen !== 'screen-admin') return;
     autoRefreshBusy = true;
     try {
-      await loadRows();
+      await loadRows({ syncForm: false });
       if (state.currentScreen === 'screen-list')  renderList();
       if (state.currentScreen === 'screen-admin') renderAdminReport();
     } catch { /* silent — next tick will retry */ }
@@ -717,7 +746,7 @@ async function onScanSuccess(rawCode) {
   if (!row) {
     // Might be a person added from another device — reload once and retry
     try {
-      await loadRows();
+      await loadRows({ syncForm: false });
       row = state.rows.find(r => r.id === parsed.id);
     } catch {}
   }
@@ -1030,12 +1059,24 @@ async function deleteCurrentEvent() {
   } finally { setLoading(false); }
 }
 
+function syncBatchStateFromForm() {
+  const rows = [...document.querySelectorAll('#batch-rows .batch-row')];
+  if (!rows.length) return;
+  state.batches = rows.map(row => ({
+    min: row.querySelector('.batch-min')?.value.trim() || '',
+    max: row.querySelector('.batch-max')?.value.trim() || '',
+    time: row.querySelector('.batch-time')?.value.trim() || '',
+  }));
+}
+
 function addBatchRow() {
+  syncBatchStateFromForm();
   state.batches.push({ min: '', max: '', time: '' });
   renderBatchEditor();
 }
 
 function removeBatchRow(index) {
+  syncBatchStateFromForm();
   state.batches.splice(index, 1);
   renderBatchEditor();
 }
@@ -1327,6 +1368,11 @@ async function generateNoticeDocuments(rows) {
   try {
     const outputRows = noticeRowsForOutput(rows);
     setLoading(true);
+    const templateId = state.eventMeta?.templateId || '';
+    if (templateId && templateById(templateId)) {
+      await downloadNoticeFromTemplate(outputRows, templateId);
+      return;
+    }
     await downloadNoticeWord(outputRows);
     await downloadNoticePdf(outputRows);
   } catch (err) {
@@ -1337,6 +1383,296 @@ async function generateNoticeDocuments(rows) {
 function generateAllNotices() { generateNoticeDocuments(state.rows); }
 function generateSelectedNotice() { if (!state.noticeRow) { showError('notice-error', '請先查找並選擇參與者。'); return; } generateNoticeDocuments([state.noticeRow]); }
 
+// ── Notice Templates (活動通知範本) ─────────────────────────────────────────────
+
+const ROC_WEEKDAYS = '日一二三四五六';
+
+function rocDate(isoDate) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(isoDate || ''));
+  if (!match) return '';
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return `${Number(match[1]) - 1911}年${match[2]}月${match[3]}日星期${ROC_WEEKDAYS[date.getDay()]}`;
+}
+
+function chineseClock(time) {
+  const match = /^(\d{1,2}):(\d{2})/.exec(String(time || ''));
+  if (!match) return { period: '', text: '' };
+  const hour = Number(match[1]);
+  const period = hour < 12 ? '上午' : hour === 12 ? '中午' : '下午';
+  const shown = hour > 12 ? hour - 12 : hour;
+  return { period, text: `${shown}：${match[2]}` };
+}
+
+function eventTimeText(meta) {
+  const start = chineseClock(meta.startTime);
+  const end = chineseClock(meta.endTime);
+  if (!start.text && !end.text) return '';
+  if (!end.text) return `${start.period}${start.text}`;
+  if (!start.text) return `${end.period}${end.text}`;
+  return `${start.period}${start.text}～${end.period === start.period ? '' : end.period}${end.text}`;
+}
+
+function eventDateText(meta) {
+  const start = rocDate(meta.startDate);
+  const end = rocDate(meta.endDate);
+  if (start && end && meta.endDate !== meta.startDate) return `${start}至${end}`;
+  return start || end;
+}
+
+function noticeTemplateValues(row) {
+  const meta = state.eventMeta || {};
+  return {
+    編號: row.id,
+    姓名: row.name,
+    通訊地址: row.address || '',
+    報到時段: row.batchTime || '',
+    報到日期: rocDate(meta.startDate),
+    活動名稱: state.spreadsheetTitle || '',
+    活動日期: eventDateText(meta),
+    活動時間: eventTimeText(meta),
+    活動說明: meta.notice || '',
+    活動地點: meta.location || '',
+    發放地點: meta.location || '',
+  };
+}
+
+function qrGifBytes(text) {
+  const qr = qrcode(0, 'M');
+  qr.addData(text); qr.make();
+  return { bytes: base64Bytes(qr.createDataURL(10, 2)), ext: 'gif' };
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
+function templateById(id) {
+  return state.templates.find(item => item.id === id) || null;
+}
+
+async function loadTemplates() {
+  try {
+    const result = await apiAction('template.list');
+    state.templates = result.templates || [];
+    state.templatesError = '';
+  } catch (err) {
+    state.templates = [];
+    state.templatesError = err.message;
+  }
+  renderTemplateSelect();
+  renderTemplateManager();
+  renderNoticeTemplateInfo();
+}
+
+function renderTemplateSelect() {
+  const select = document.getElementById('input-event-template');
+  if (!select) return;
+  const current = state.eventMeta?.templateId || '';
+  const options = ['<option value="">系統預設版面（不使用範本）</option>']
+    .concat(state.templates.map(item => `<option value="${esc(item.id)}">${esc(item.name)}</option>`));
+  if (current && !templateById(current)) options.push(`<option value="${esc(current)}">（範本已刪除）</option>`);
+  select.innerHTML = options.join('');
+  select.value = current;
+}
+
+// Choosing a venue template fills in the wording the venue used last time.
+function onEventTemplateChange() {
+  const select = document.getElementById('input-event-template');
+  const template = templateById(select?.value || '');
+  const hint = document.getElementById('event-template-hint');
+  if (!template) {
+    if (hint) hint.textContent = '未使用範本時，通知單使用系統預設版面。';
+    return;
+  }
+  const source = template.lastUsed || template.defaults || {};
+  const set = (id, value) => { const el = document.getElementById(id); if (el) el.value = value || ''; };
+  set('input-event-location', source.location);
+  set('input-event-notice', source.notice);
+  set('input-event-nav-url', source.navUrl);
+  if (hint) {
+    hint.textContent = template.lastUsed
+      ? `已帶入「${template.lastUsed.title || template.name}」使用的說明、地點與導航連結，可再修改；記得儲存活動資料。`
+      : `已帶入「${template.name}」範本的預設文字，可再修改；記得儲存活動資料。`;
+  }
+}
+
+function renderNoticeTemplateInfo() {
+  const el = document.getElementById('notice-template-info');
+  const button = document.getElementById('btn-generate-all-notices');
+  const template = templateById(state.eventMeta?.templateId || '');
+  if (el) {
+    el.textContent = !state.sheetId ? ''
+      : template ? `通知單將套用「${template.name}」範本，產出一份合併的 Word 檔（需要 PDF 時，可用 Word 另存新檔）。`
+      : state.eventMeta?.templateId ? '此活動選用的範本已被刪除，將改用系統預設版面。'
+      : '此活動未選用通知範本，將使用系統預設版面。可在「1. 活動設定」選擇範本。';
+  }
+  if (button) button.textContent = template ? '產生全部通知單（Word）' : '產生全部 Word／PDF';
+}
+
+function renderTemplateManager() {
+  const el = document.getElementById('template-list');
+  if (!el) return;
+  if (state.templatesError) { el.innerHTML = `<p class="msg-error">無法讀取範本：${esc(state.templatesError)}</p>`; return; }
+  if (!state.templates.length) { el.innerHTML = '<p class="msg-empty">尚未建立任何範本。</p>'; return; }
+  el.innerHTML = `<div class="template-list">${state.templates.map(item => `
+    <div class="template-row">
+      <div class="template-row-main">
+        <b>${esc(item.name)}</b>
+        <span class="template-row-meta">${esc(item.fileName || '')}${item.size ? `・${Math.ceil(item.size / 1024)} KB` : ''}・更新：${esc(item.updatedAt || '')}</span>
+        ${item.lastUsed ? `<span class="template-row-meta">最近使用：${esc(item.lastUsed.title || '')}</span>` : ''}
+      </div>
+      <div class="template-row-actions">
+        <button type="button" class="btn btn-secondary btn-small" onclick="editTemplate('${esc(item.id)}')">編輯</button>
+        <button type="button" class="btn btn-secondary btn-small" onclick="downloadTemplateFile('${esc(item.id)}')">下載</button>
+        <button type="button" class="btn-icon-danger" onclick="deleteTemplate('${esc(item.id)}')">刪除</button>
+      </div>
+    </div>`).join('')}</div>`;
+}
+
+function resetTemplateForm() {
+  ['template-id', 'template-name', 'template-location', 'template-notice', 'template-nav-url', 'template-file'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  const title = document.getElementById('template-form-title');
+  if (title) title.textContent = '新增範本';
+  const hint = document.getElementById('template-file-hint');
+  if (hint) hint.textContent = '';
+  hideError('template-error');
+}
+
+function editTemplate(id) {
+  const item = templateById(id);
+  if (!item) return;
+  resetTemplateForm();
+  const set = (field, value) => { const el = document.getElementById(field); if (el) el.value = value || ''; };
+  set('template-id', item.id);
+  set('template-name', item.name);
+  set('template-location', item.defaults?.location);
+  set('template-notice', item.defaults?.notice);
+  set('template-nav-url', item.defaults?.navUrl);
+  const title = document.getElementById('template-form-title');
+  if (title) title.textContent = `編輯範本：${item.name}`;
+  const hint = document.getElementById('template-file-hint');
+  if (hint) hint.textContent = `目前檔案：${item.fileName || '（未命名）'}。不選新檔案則保留原檔。`;
+  document.getElementById('template-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function showTemplateStatus(message) {
+  const el = document.getElementById('template-status');
+  if (!el) return;
+  el.textContent = message;
+  el.style.display = message ? '' : 'none';
+  if (message) setTimeout(() => { if (el.textContent === message) el.style.display = 'none'; }, 8000);
+}
+
+async function saveTemplateForm() {
+  hideError('template-error');
+  showTemplateStatus('');
+  const value = id => document.getElementById(id)?.value || '';
+  const id = value('template-id');
+  const name = value('template-name').trim();
+  const file = document.getElementById('template-file')?.files?.[0];
+  if (!name) { showError('template-error', '請輸入範本名稱。'); return; }
+  if (!id && !file) { showError('template-error', '請選擇 Word 範本檔（.docx）。'); return; }
+  const payload = {
+    id, name,
+    location: value('template-location').trim(),
+    notice: value('template-notice'),
+    navUrl: value('template-nav-url').trim(),
+  };
+  setLoading(true);
+  try {
+    let warnings = [];
+    if (file) {
+      if (!/\.docx$/i.test(file.name)) throw new Error('請選擇 Word（.docx）檔；舊版 .doc 請先在 Word 另存為 .docx。');
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const info = await NoticeTemplate.inspectTemplate(JSZip, bytes);
+      if (!info.images.includes('報到QR')) {
+        throw new Error('範本中找不到報到 QR 圖片。請在 Word 中對 QR 圖片按右鍵 →「檢視替代文字」，描述填入 {{報到QR}}。');
+      }
+      if (!info.text.includes('編號') && !info.text.includes('姓名')) {
+        throw new Error('範本中找不到 {{編號}} 或 {{姓名}} 標記，請確認範本已加入標記。');
+      }
+      const known = ['編號', '姓名', '通訊地址', '報到時段', '報到日期', '活動名稱', '活動日期', '活動時間', '活動說明', '活動地點', '發放地點'];
+      const unknown = info.text.filter(tag => !known.includes(tag));
+      if (unknown.length) warnings.push(`無法辨識的標記會原樣保留：${unknown.map(tag => `{{${tag}}}`).join('、')}`);
+      if (info.hasMultiplePages) warnings.push('範本中有分頁符號；系統會以整份範本為每人一份，請確認範本只有一頁。');
+      payload.fileName = file.name;
+      payload.data = bytesToBase64(bytes);
+    }
+    const result = await apiAction('template.save', payload);
+    state.templates = result.templates || [];
+    delete state.templateFiles[id];
+    resetTemplateForm();
+    renderTemplateSelect();
+    renderTemplateManager();
+    renderNoticeTemplateInfo();
+    showTemplateStatus(`✓ 已儲存範本「${name}」。${warnings.length ? `\n${warnings.join('\n')}` : ''}`);
+  } catch (err) {
+    showError('template-error', '儲存失敗：' + err.message);
+  } finally { setLoading(false); }
+}
+
+async function fetchTemplateBytes(id) {
+  const item = templateById(id);
+  const cached = state.templateFiles[id];
+  if (cached && item && cached.updatedAt === item.updatedAt) return cached.bytes;
+  const result = await apiAction('template.get', { id });
+  const bytes = base64Bytes(`data:;base64,${result.data}`);
+  state.templateFiles[id] = { updatedAt: result.updatedAt, bytes, fileName: result.fileName };
+  return bytes;
+}
+
+async function downloadTemplateFile(id) {
+  const item = templateById(id);
+  setLoading(true);
+  try {
+    const bytes = await fetchTemplateBytes(id);
+    downloadBlob(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), item?.fileName || `${item?.name || '通知範本'}.docx`);
+  } catch (err) {
+    showError('template-error', '下載失敗：' + err.message);
+  } finally { setLoading(false); }
+}
+
+async function deleteTemplate(id) {
+  const item = templateById(id);
+  if (!item) return;
+  if (!confirm(`確定要刪除範本「${item.name}」？已使用此範本的活動將改用系統預設版面。`)) return;
+  setLoading(true);
+  try {
+    const result = await apiAction('template.delete', { id });
+    state.templates = result.templates || [];
+    delete state.templateFiles[id];
+    renderTemplateSelect();
+    renderTemplateManager();
+    renderNoticeTemplateInfo();
+    showTemplateStatus(`已刪除範本「${item.name}」。`);
+  } catch (err) {
+    showError('template-error', '刪除失敗：' + err.message);
+  } finally { setLoading(false); }
+}
+
+async function downloadNoticeFromTemplate(rows, templateId) {
+  const template = templateById(templateId);
+  const bytes = await fetchTemplateBytes(templateId);
+  const pages = rows.map(row => ({
+    values: noticeTemplateValues(row),
+    images: { 報到QR: qrGifBytes(qrPayloadFor(row.id)) },
+  }));
+  const navUrl = (state.eventMeta?.navUrl || '').trim();
+  const zip = await NoticeTemplate.mergeTemplate(JSZip, bytes, pages, {
+    sharedImages: navUrl ? { 導航QR: qrGifBytes(navUrl) } : {},
+  });
+  const blob = await zip.generateAsync({
+    type: 'blob', compression: 'DEFLATE',
+    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  });
+  const suffix = rows.length === 1 ? `_${rows[0].id}` : '';
+  downloadBlob(blob, `${state.spreadsheetTitle || '活動'}_通知單_${template?.name || '範本'}${suffix}.docx`);
+}
+
 function renderAdmin() {
   renderEventContext();
   renderAdminReport();
@@ -1344,6 +1680,8 @@ function renderAdmin() {
   renderNoticeResults();
   renderNoticePreview();
   renderAllowListSection(); // async, self-managing
+  renderNoticeTemplateInfo();
+  if (!state.templatesLoaded) { state.templatesLoaded = true; loadTemplates(); }
   const title = document.getElementById('dashboard-title');
   const subtitle = document.getElementById('dashboard-subtitle');
   if (title) title.textContent = state.sheetId && state.spreadsheetTitle
