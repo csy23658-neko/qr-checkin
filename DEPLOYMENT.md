@@ -10,7 +10,28 @@ The event-bound branch is deployed to separate Cloudflare resources:
 - Worker API: `https://qr-checkin-event-bound-staging.csy23658.workers.dev`
 - Branch: `codex/event-bound-qr-notice-output`
 
-These resources are independent of the existing `qr-checkin` Pages project and `qr-checkin-api-staging` Worker. The staging Worker still requires `ADMIN_EMAILS` and `GOOGLE_SERVICE_ACCOUNT_JSON` to be added as secrets from a secure source before authenticated API actions can work.
+These resources are independent of the existing `qr-checkin` Pages project and `qr-checkin-api-staging` Worker. `ADMIN_EMAILS` and `GOOGLE_SERVICE_ACCOUNT_JSON` are already set as secrets on the staging Worker; redeploying keeps them.
+
+> **Warning:** despite its name, `qr-checkin-api-staging` is the API used by the live site (`https://qr-checkin-3iv.pages.dev`). Running `wrangler deploy` without `--config` uses `worker/wrangler.jsonc` and overwrites it. Pushing to `main` deploys the live Pages site automatically.
+
+### Update this staging deployment
+
+The staging Pages project is a Direct Upload project, so pushing to Git does not update it. After committing, run this from the repository root in Git Bash. It deploys the Worker, then uploads only the committed site files, so `worker/.dev.vars`, `.worktrees/`, and local documents cannot be published:
+
+```bash
+npx wrangler deploy --config worker/wrangler.event-bound-staging.jsonc
+
+OUT="$(mktemp -d)"
+SHA="$(git rev-parse HEAD)"
+git archive HEAD -- . ':!worker' ':!tools' ':!DEPLOYMENT.md' ':!.gitignore' | tar -x -C "$OUT"
+(cd "$OUT" && npx wrangler pages deploy . \
+  --project-name qr-checkin-event-bound-staging \
+  --branch codex/event-bound-qr-notice-output \
+  --commit-hash "$SHA" \
+  --commit-dirty=false)
+```
+
+Before merging this branch into `main`, change `API_BASE_URL` in `config.js` back to the live Worker URL and deploy the live Worker first.
 
 ## 1. Prepare Google resources
 
