@@ -1871,13 +1871,46 @@ function printReport() {
   w.document.close();
 }
 
-function downloadReport() {
-  if (!state.sheetId) { alert('請先建立或選擇活動。'); return; }
-  const header  = EVENT_HEADERS;
-  const csvRows = [
-    header,
+function reportExportRows() {
+  return [
+    EVENT_HEADERS,
     ...state.rows.map(r => [r.id, r.name, r.address, r.notes, r.checkinStamp, r.checkinBy, r.batchTime || '']),
   ];
+}
+
+function downloadReportXlsx() {
+  if (!state.sheetId) { alert('請先建立或選擇活動。'); return; }
+  if (typeof XLSX === 'undefined') { alert('匯出工具尚未載入，請重新整理後再試。'); return; }
+
+  const rows = reportExportRows();
+  const sheet = XLSX.utils.aoa_to_sheet(rows);
+  sheet['!cols'] = [
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 34 },
+    { wch: 26 },
+    { wch: 22 },
+    { wch: 24 },
+    { wch: 22 },
+  ];
+
+  // Keep identifiers, timestamps, and user-entered values as text so Excel
+  // does not remove leading zeroes or reinterpret them using local settings.
+  for (let row = 0; row < rows.length; row++) {
+    for (let col = 0; col < EVENT_HEADERS.length; col++) {
+      const cell = sheet[XLSX.utils.encode_cell({ r: row, c: col })];
+      if (cell) cell.z = '@';
+    }
+  }
+
+  const book = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(book, sheet, '出席報告');
+  XLSX.writeFile(book, `${state.spreadsheetTitle || '出席報告'}_${dateString()}.xlsx`);
+}
+
+function downloadReport() {
+  if (!state.sheetId) { alert('請先建立或選擇活動。'); return; }
+  const csvRows = reportExportRows();
   const csv  = csvRows.map(row =>
     row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(',')
   ).join('\r\n');
